@@ -32,7 +32,7 @@ export function createVideoCard(video, { hasChange = false, isSelected = false }
         ? '<span class="tag tag-exclusion">排除</span>'
         : '';
 
-    const statusTag = video.is_examined
+    const statusTag = exclusionTag ? '' : video.is_examined
         ? '<span class="tag tag-examined">已收录</span>'
         : '<span class="tag tag-uncheck">待收录</span>';
 
@@ -43,7 +43,7 @@ export function createVideoCard(video, { hasChange = false, isSelected = false }
     return `
         <div class="video-item ${changeClass}" data-bvid="${escapeHtml(bvid)}">
             <div class="video-select">
-                <input class="video-checkbox" type="checkbox" ${isSelected ? 'checked' : ''} onchange="app.toggleVideoSelection(${bvidArg}, this.checked)">
+                <input class="video-checkbox" aria-label="选择 ${escapeHtml(video.title || bvid)}" type="checkbox" ${isSelected ? 'checked' : ''} onchange="app.toggleVideoSelection(${bvidArg}, this.checked)">
                 <div class="video-content">
                     <img class="video-cover" src="${escapeHtml(coverUrl || fallbackCover)}" alt="封面" crossorigin="anonymous" referrerpolicy="no-referrer" loading="lazy" decoding="async"
                         onerror="this.onerror=null;this.src='${escapeHtml(fallbackCover)}'"
@@ -66,6 +66,7 @@ export function createVideoCard(video, { hasChange = false, isSelected = false }
                         </div>
                         <div class="video-actions">
                             <button class="btn btn-primary btn-sm" onclick="app.openEditPanel(${bvidArg})">✏️ 编辑</button>
+                            <button class="btn btn-danger btn-sm" onclick="app.excludeVideo(${bvidArg})" title="排除所有期刊，保存到本地待提交">收录排除</button>
                             <button class="btn btn-secondary btn-sm" onclick="window.open('https://www.bilibili.com/video/${escapeHtml(bvid)}', '_blank')">🔗 跳转</button>
                         </div>
                     </div>
@@ -82,7 +83,7 @@ export function createEditPanel(change, bvid) {
     return `
         <div class="edit-panel-header">
             <div class="edit-panel-title">编辑: ${escapeHtml(bvid)}</div>
-            <button class="edit-panel-close" onclick="app.closeEditPanel()">&times;</button>
+            <button class="edit-panel-close" aria-label="取消编辑" onclick="app.closeEditPanel()">&times;</button>
         </div>
         <div class="edit-panel-body">
             <div class="form-group">
@@ -139,6 +140,7 @@ export function createEditPanel(change, bvid) {
         </div>
         <div class="edit-panel-footer">
             <button class="btn btn-secondary" onclick="app.closeEditPanel()">取消</button>
+            <button class="btn btn-danger" onclick="app.excludeEditingVideo()" title="排除所有期刊，保存到本地待提交">收录排除</button>
             <button class="btn btn-primary" onclick="app.saveChange(${bvidArg})">保存到本地</button>
         </div>
     `;
@@ -148,7 +150,7 @@ export function createChangeItems(changes) {
     return changes.map(([bvid, data]) => {
         const changesDesc = [];
         if (data.ranks && data.ranks.length) changesDesc.push(`期刊: ${data.ranks.join(', ')}`);
-        if ('is_examined' in data) changesDesc.push(data.is_examined ? '已收录' : '未收录');
+        if ('is_examined' in data) changesDesc.push(data.is_examined ? (data.ranks?.length ? '已收录' : '收录排除') : '未收录');
         if ('is_republish' in data) changesDesc.push(data.is_republish ? '转载' : '自制');
         if (data.staff_info) changesDesc.push(`Staff: ${data.staff_info}`);
 
@@ -171,12 +173,12 @@ export function createPreviewContent({ data, previewRank, previewIndex }) {
                 <div class="ranking-header">
                     <div class="ranking-rank">⚠️</div>
                 </div>
-                <div>${escapeHtml(String(previewRank).toUpperCase())} 第${escapeHtml(previewIndex)}期排行榜暂无视频数据</div>
+                <div>${escapeHtml(String(previewRank).toUpperCase())} 第${escapeHtml(previewIndex)}期排行榜当前筛选下暂无视频数据</div>
             </div>
         `;
     }
 
-    const stat = data.stat;
+    const stat = data.stat || {};
     const entries = data.entries;
 
     return `
@@ -198,41 +200,36 @@ export function createPreviewCard(entry) {
     const fallbackCover = getCoverFallbackDataUrl();
     const bvid = String(entry.bvid ?? '');
     const bvidArg = jsArg(bvid);
-
+    const specialRank = String(entry.specialRank || 'normal').toLowerCase();
+    const rank = ['hot', 'sh'].includes(specialRank) ? specialRank.toUpperCase() : `#${entry.rank}`;
+    const metrics = [
+        ['view', '播放'], ['like', '点赞'], ['share', '分享'], ['coin', '硬币'],
+        ['favorite', '收藏'], ['reply', '评论'], ['danmaku', '弹幕'],
+    ];
     return `
-        <div class="ranking-card">
-            <div class="ranking-header">
-                <div class="ranking-rank">#${escapeHtml(entry.rank)}</div>
+        <article class="ranking-card ranking-row" data-bvid="${escapeHtml(bvid)}">
+            <div class="ranking-position">
+                <div class="ranking-rank">${escapeHtml(rank)}</div>
                 <div class="ranking-score">分数: ${Number(entry.totalScore || 0).toFixed(1)}</div>
+                ${entry.isNew ? '<span class="tag tag-rank-utau">新投稿</span>' : ''}
             </div>
-            <div style="display: flex; gap: 1rem; margin-bottom: 0.5rem;">
-                <img src="${escapeHtml(coverUrl || fallbackCover)}" style="width: 120px; height: 68px; object-fit: cover; border-radius: 4px; background: var(--gray-200); cursor: pointer;"
+            <a class="ranking-cover-link" href="https://www.bilibili.com/video/${escapeHtml(bvid)}" target="_blank" rel="noopener noreferrer" aria-label="打开 ${escapeHtml(entry.title || bvid)}">
+                <img class="ranking-cover" src="${escapeHtml(coverUrl || fallbackCover)}" alt="视频封面"
                     crossorigin="anonymous" referrerpolicy="no-referrer" loading="lazy" decoding="async"
-                    onerror="this.onerror=null;this.src='${escapeHtml(fallbackCover)}'"
-                    onclick="window.open('https://www.bilibili.com/video/${escapeHtml(bvid)}', '_blank')"
-                    title="点击打开B站视频">
-                <div style="flex: 1; min-width: 0;">
-                    <div style="font-weight: 600; margin-bottom: 0.25rem; cursor: pointer; color: var(--primary);"
-                        onclick="window.open('https://www.bilibili.com/video/${escapeHtml(bvid)}', '_blank')">
-                        ${escapeHtml(entry.title || bvid)}
-                    </div>
-                    <div style="font-size: 0.8125rem; color: var(--gray-500); margin-bottom: 0.5rem;">
-                        UP主: ${escapeHtml(entry.uploader || '未知')}
-                    </div>
-                    <div style="display: flex; gap: 1rem; font-size: 0.8125rem; color: var(--gray-600); flex-wrap: wrap;">
-                        <span>👁 ${Number(entry.view || 0).toLocaleString()}</span>
-                        <span>❤️ ${Number(entry.like || 0).toLocaleString()}</span>
-                        <span>🪙 ${Number(entry.coin || 0).toLocaleString()}</span>
-                        <span>⭐ ${Number(entry.favorite || 0).toLocaleString()}</span>
-                        <span>📤 ${Number(entry.share || 0).toLocaleString()}</span>
-                    </div>
-                    ${entry.isNew ? '<span class="tag tag-rank-utau" style="margin-top: 0.5rem; display: inline-block;">新上榜</span>' : ''}
+                    onerror="this.onerror=null;this.src='${escapeHtml(fallbackCover)}'">
+            </a>
+            <div class="ranking-details">
+                <a class="ranking-title" href="https://www.bilibili.com/video/${escapeHtml(bvid)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.title || bvid)}</a>
+                <div class="ranking-uploader">UP主: ${escapeHtml(entry.uploader || '未知')}</div>
+                <div class="ranking-metrics">
+                    ${metrics.map(([key, label]) => `<span class="ranking-metric"><span>${label}</span><strong>${Number(entry[key] || 0).toLocaleString()}</strong></span>`).join('')}
                 </div>
             </div>
-            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--gray-200);">
+            <div class="ranking-actions">
                 <button class="btn btn-primary btn-sm" onclick="app.openEditPanelByBvid(${bvidArg})">✏️ 编辑</button>
-                <button class="btn btn-secondary btn-sm" onclick="window.open('https://www.bilibili.com/video/${escapeHtml(bvid)}', '_blank')">🔗 跳转</button>
+                <button class="btn btn-danger btn-sm" onclick="app.excludeVideo(${bvidArg})" title="排除所有期刊，保存到本地待提交">收录排除</button>
+                <a class="btn btn-secondary btn-sm" href="https://www.bilibili.com/video/${escapeHtml(bvid)}" target="_blank" rel="noopener noreferrer">🔗 跳转</a>
             </div>
-        </div>
+        </article>
     `;
 }

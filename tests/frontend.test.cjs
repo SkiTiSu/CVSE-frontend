@@ -1,0 +1,192 @@
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const { chromium } = require('playwright');
+const http = require('node:http');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+let server, browser, base;
+const video = (bvid, extra = {}) => ({ bvid, avid: `av${bvid.slice(2)}`, title: `视频 ${bvid}`, uploader: '测试UP', desc: '简介', tags: [], ranks: ['domestic'], is_examined: false, is_republish: false, staff_info: '原Staff', cover: '', ...extra });
+const videos = [video('BV1'), video('BV2', { is_republish: true }), video('BV3', { ranks: ['sv'] })];
+const entry = (bvid, rank, specialRank = 'normal') => ({ ...video(bvid), rank, specialRank, view: 101, like: 102, share: 103, coin: 104, favorite: 105, reply: 106, danmaku: 107, isNew: true, totalScore: 500 });
+const entries = [entry('BV8', 0, 'hot'), entry('BV9', 0, 'sh'), entry('BV1', 1), entry('BV2', 2)];
+before(async () => {
+    server = http.createServer(async (req, res) => {
+        try {
+            const pathname = new URL(req.url, 'http://localhost').pathname;
+            const file = path.join(root, pathname === '/' ? 'index.html' : pathname);
+            if (!file.startsWith(root + path.sep)) throw Error('Invalid path');
+            res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html');
+            res.end(await fs.readFile(file));
+        } catch { res.writeHead(404); res.end(); }
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${server.address().port}`;
+    browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) });
+});
+after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
+async function pageFor(t, { delay = {}, width = 1400 } = {}) {
+    const context = await browser.newContext({ viewport: { width, height: 1000 } });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    const requests = [], errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('dialog', dialog => dialog.accept());
+    await page.route('**/*', async route => {
+        const req = route.request(), url = new URL(req.url());
+        if (url.origin !== base) return route.abort(); // Never contact production or third parties.
+        if (!url.pathname.startsWith('/api/')) return route.continue();
+        requests.push({ url, method: req.method(), body: req.postDataJSON() });
+        let data;
+        if (url.pathname === '/api/videos') {
+            const republish = url.searchParams.get('is_republish');
+            let filtered = videos.filter(v => !['true', 'false'].includes(republish) || v.is_republish === (republish === 'true'));
+            data = { success: true, data: filtered, total: filtered.length, stats: {} };
+        } else if (url.pathname.startsWith('/api/video/')) {
+            const bvid = url.pathname.split('/').pop();
+            if (delay[bvid]) await new Promise(resolve => setTimeout(resolve, delay[bvid]));
+            data = { success: true, data: video(bvid) };
+        } else if (url.pathname === '/api/ranking-preview') {
+            const filtered = entries.filter(e => url.searchParams.get('show_special') === 'true' || e.specialRank === 'normal');
+            data = { success: true, data: { stat: { count: entries.length }, entries: filtered, total: filtered.length } };
+        } else if (url.pathname === '/api/submit-changes') data = { success: true };
+        else return route.abort();
+        await route.fulfill({ json: data });
+    });
+    await page.goto(base);
+    await page.waitForSelector('.video-item');
+    t.after(() => assert.deepEqual(errors, []));
+    return { page, requests };
+}
+const open = (page, bvid = 'BV1') => page.locator(`#videoList [data-bvid="${bvid}"] button`).filter({ hasText: '编辑' }).click();
+const state = page => page.evaluate(() => ({ videos: app.videos, changes: [...app.changes], editing: app.currentEditingBvid }));
+
+test('outside click cancels independent rank draft and staff edits', async t => {
+    const { page, requests } = await pageFor(t);
+    await open(page);
+    await page.locator('#rank-domestic input').uncheck();
+    await page.locator('#staffInfo').fill('不应保存');
+    await page.locator('.app-header h1').click();
+    assert.equal(await page.locator('#editPanel').count(), 0);
+    const result = await state(page);
+    assert.deepEqual(result.videos[0].ranks, ['domestic']);
+    assert.equal(result.videos[0].staff_info, '原Staff');
+    assert.equal(result.changes.length, 0);
+    assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('new edit and repeated edit leave exactly one panel, cancelling prior draft', async t => {
+    const { page } = await pageFor(t);
+    await open(page);
+    await page.locator('#rank-sv input').check();
+    await open(page, 'BV3');
+    assert.equal(await page.locator('#editPanel').count(), 1);
+    assert.equal((await state(page)).editing, 'BV3');
+    await open(page, 'BV3');
+    assert.equal(await page.locator('#editPanel').count(), 1);
+    assert.deepEqual((await state(page)).videos[0].ranks, ['domestic']);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#editPanel').count(), 0);
+});
+
+test('cancel preserves already staged change and clearing restores original ranks', async t => {
+    const { page } = await pageFor(t);
+    await open(page);
+    await page.locator('#rank-sv input').check();
+    await page.locator('#editPanel').getByText('保存到本地', { exact: true }).click();
+    await open(page);
+    await page.locator('#rank-domestic input').uncheck();
+    await page.locator('#editPanel').getByText('取消', { exact: true }).click();
+    assert.deepEqual((await state(page)).changes[0][1].ranks, ['domestic', 'sv']);
+    await page.locator('#clearChangesBtn').click();
+    assert.deepEqual((await state(page)).videos[0].ranks, ['domestic']);
+});
+
+test('batch rejection stages selected videos only, keeps metadata, and is reversible', async t => {
+    const { page, requests } = await pageFor(t);
+    assert.equal(await page.locator('#batchRejectBtn').isDisabled(), true);
+    await page.locator('#videoList [data-bvid="BV1"] input').check();
+    await page.locator('#videoList [data-bvid="BV2"] input').check();
+    await page.locator('#batchRejectBtn').click();
+    const result = await state(page);
+    assert.equal(result.changes.length, 2);
+    for (const [, change] of result.changes) { assert.deepEqual(change.ranks, []); assert.equal(change.is_examined, true); assert.equal(change.staff_info, '原Staff'); }
+    assert.equal(result.changes[1][1].is_republish, true);
+    assert.equal(result.videos[2].is_examined, false);
+    assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+    assert.equal(await page.locator('#batchRejectBtn').isDisabled(), true);
+    await page.locator('#clearChangesBtn').click();
+    assert.deepEqual((await state(page)).videos, videos);
+});
+
+test('single exclusion and edit-panel exclusion use reversible pending changes', async t => {
+    const { page } = await pageFor(t);
+    await page.locator('#videoList [data-bvid="BV1"]').getByText('收录排除', { exact: true }).click();
+    assert.equal((await state(page)).changes.length, 1);
+    assert.equal(await page.locator('#videoList [data-bvid="BV1"] .tag-examined').count(), 0);
+    await open(page, 'BV2');
+    await page.locator('#staffInfo').fill('新Staff');
+    await page.locator('#editPanel').getByText('收录排除', { exact: true }).click();
+    const change = (await state(page)).changes.find(([bvid]) => bvid === 'BV2')[1];
+    assert.deepEqual(change.ranks, []); assert.equal(change.is_examined, true); assert.equal(change.staff_info, '新Staff');
+    assert.equal(await page.locator('#editPanel').count(), 0);
+});
+
+test('republish filter reaches API and includes both true and false modes', async t => {
+    const { page, requests } = await pageFor(t);
+    for (const [value, count] of [['true', 1], ['false', 2], ['', 3]]) {
+        await page.locator('#republishFilter').selectOption(value);
+        await page.locator('#searchBtn').click();
+        await page.waitForFunction(count => document.querySelectorAll('#videoList .video-item').length === count, count);
+        assert.equal(requests.at(-1).url.searchParams.get('is_republish'), value);
+    }
+});
+
+test('preview horizontal rows show seven metrics, new submission label, and optional HOT/SH', async t => {
+    const { page, requests } = await pageFor(t);
+    await page.locator('[data-page="preview"]').click();
+    assert.equal(await page.locator('#previewShowSpecial').isChecked(), false);
+    await page.locator('#getPreviewBtn').click();
+    await page.waitForSelector('.ranking-row');
+    assert.equal(await page.locator('.ranking-row').count(), 2);
+    for (const label of ['播放', '点赞', '分享', '硬币', '收藏', '评论', '弹幕']) assert.equal(await page.locator('.ranking-row').first().getByText(label, { exact: true }).count(), 1);
+    assert.equal(await page.getByText('新上榜', { exact: true }).count(), 0);
+    assert.equal(await page.locator('.ranking-row').first().getByText('新投稿', { exact: true }).count(), 1);
+    const boxes = await page.locator('.ranking-row').evaluateAll(rows => rows.map(row => { const r = row.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width }; }));
+    assert.equal(boxes[0].x, boxes[1].x); assert.ok(boxes[1].y > boxes[0].y); assert.ok(boxes[0].width > 800);
+    await page.locator('#previewShowSpecial').check();
+    await page.waitForFunction(() => document.querySelectorAll('.ranking-row').length === 4);
+    assert.equal(requests.at(-1).url.searchParams.get('show_special'), 'true');
+    assert.equal(await page.locator('.ranking-rank').getByText('HOT', { exact: true }).count(), 1);
+    assert.equal(await page.locator('.ranking-rank').getByText('SH', { exact: true }).count(), 1);
+});
+
+test('late preview edit response cannot override newer edit or reopen after cancel', async t => {
+    const { page } = await pageFor(t, { delay: { BV8: 350, BV9: 350 } });
+    await page.evaluate(() => { app.openEditPanelByBvid('BV8'); app.openEditPanel('BV1'); });
+    await page.waitForTimeout(450);
+    assert.equal((await state(page)).editing, 'BV1');
+    await page.evaluate(() => { app.openEditPanelByBvid('BV9'); app.closeEditPanel(); });
+    await page.waitForTimeout(450);
+    assert.equal(await page.locator('#editPanel').count(), 0);
+});
+
+test('navigation cancels editing without losing saved work', async t => {
+    const { page } = await pageFor(t);
+    await open(page);
+    await page.locator('#rank-sv input').check();
+    await page.locator('[data-page="preview"]').click();
+    assert.equal(await page.locator('#editPanel').count(), 0);
+    assert.deepEqual((await state(page)).videos[0].ranks, ['domestic']);
+});
+
+test('mobile preview fits viewport and actions remain reachable', async t => {
+    const { page } = await pageFor(t, { width: 390 });
+    await page.locator('[data-page="preview"]').click();
+    await page.locator('#getPreviewBtn').click();
+    await page.waitForSelector('.ranking-row');
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    assert.equal(overflow, false);
+    await page.locator('.ranking-row').first().getByText('编辑', { exact: false }).click();
+    assert.equal(await page.locator('#editPanel').count(), 1);
+});

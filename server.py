@@ -94,6 +94,7 @@ async def get_videos_async(
     page_size: int,
     date_str: str | None = None,
     auth_key: str | None = None,
+    is_republish: str = "",
 ):
     """Get videos from CVSE server"""
     now = datetime.now()
@@ -171,6 +172,10 @@ async def get_videos_async(
         filtered = [v for v in filtered if not v["is_examined"]]
     elif examined == "exclusion":
         filtered = [v for v in filtered if v["is_examined"] and len(v["ranks"]) == 0]
+
+    if is_republish in {"true", "false"}:
+        republish = is_republish == "true"
+        filtered = [v for v in filtered if v["is_republish"] == republish]
 
     total = len(filtered)
     start = (page - 1) * page_size
@@ -344,6 +349,11 @@ def get_videos():
         page_size = int(request.args.get("page_size", 100))
         date_str = request.args.get("date", "")
         auth_key = get_auth_key_from_request()
+        is_republish = request.args.get("is_republish", "").strip().lower()
+        if is_republish not in {"", "true", "false"}:
+            return jsonify(
+                {"success": False, "error": "is_republish must be true, false, or empty"}
+            ), 400
 
         result = asyncio.run(
             capnp.run(
@@ -357,6 +367,7 @@ def get_videos():
                     page_size,
                     date_str,
                     auth_key,
+                    is_republish,
                 )
             )
         )
@@ -446,54 +457,62 @@ async def get_ranking_preview_async(
     auth_key: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    show_special: bool = False,
 ):
-    """Get ranking preview data with pagination"""
+    """Filter ranking preview entries before paginating the visible results."""
     client = await CVSE_Client.create(CVSE_HOST, CVSE_PORT, auth_key)
+    rank = Rank[rank_name.upper()]
+    empty_result = {
+        "stat": {
+            "count": 0,
+            "totalView": 0,
+            "totalLike": 0,
+            "totalCoin": 0,
+            "totalFavorite": 0,
+            "totalNew": 0,
+        },
+        "entries": [],
+        "page": page,
+        "page_size": page_size,
+        "total": 0,
+    }
     try:
-        stat = await client.lookupRankingMetaInfo(
-            Rank[rank_name.upper()], index, contain_unexamined
-        )
+        stat = await client.lookupRankingMetaInfo(rank, index, contain_unexamined)
     except Exception as e:
         logging.warning(f"Error looking up ranking meta info: {e}")
-        return {
-            "stat": {
-                "count": 0,
-                "totalView": 0,
-                "totalLike": 0,
-                "totalCoin": 0,
-                "totalFavorite": 0,
-                "totalNew": 0,
-            },
-            "entries": [],
-        }
+        return empty_result
 
     if stat.count == 0:
-        return {
-            "stat": {
-                "count": 0,
-                "totalView": 0,
-                "totalLike": 0,
-                "totalCoin": 0,
-                "totalFavorite": 0,
-                "totalNew": 0,
-            },
-            "entries": [],
-        }
+        return empty_result
 
-    # Pagination: from_rank is 1-based, to_rank is exclusive
-    from_rank = (page - 1) * page_size + 1
-    to_rank = min(from_rank + page_size, stat.count + 1)
+    # The RPC bounds are ranks, not offsets: [from_rank, to_rank). HOT/SH
+    # entries have rank 0. Fetch them too, then filter and paginate locally so
+    # special ranks and missing lookup results cannot leave gaps or wrong totals.
     indices = list(
-        await client.getAllRankingInfo(
-            Rank[rank_name.upper()], index, contain_unexamined, from_rank, to_rank
+        await client.getAllRankingInfo(rank, index, contain_unexamined, 0, stat.count + 1)
+    )
+    entries = []
+    for offset in range(0, len(indices), 4096):
+        entries.extend(
+            await client.lookupRankingInfo(
+                rank, index, contain_unexamined, indices[offset : offset + 4096]
+            )
         )
-    )
+    if not show_special:
+        entries = [
+            entry
+            for entry in entries
+            if str(entry.specialRank).lower() not in {"hot", "sh"}
+        ]
+    entries.sort(key=lambda entry: entry.rank)
+    total = len(entries)
+    start = (page - 1) * page_size
+    entries = entries[start : start + page_size]
 
-    entries = await client.lookupRankingInfo(
-        Rank[rank_name.upper()], index, contain_unexamined, indices
-    )
-
-    meta_infos = await client.lookupMetaInfo(indices)
+    # Metadata is needed only for the requested page, not every ranked video.
+    page_bvids = {entry.bvid for entry in entries}
+    page_indices = [entry for entry in indices if entry.bvid in page_bvids]
+    meta_infos = await client.lookupMetaInfo(page_indices) if page_indices else []
 
     video_info_map = {}
     for meta_info in meta_infos:
@@ -504,31 +523,6 @@ async def get_ranking_preview_async(
             "cover": meta_info.cover,
             "desc": meta_info.desc,
         }
-    # headers = {
-    #     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    #     "Referer": "https://www.bilibili.com",
-    # }
-    # async with aiohttp.ClientSession(headers=headers) as session:
-    #     for bvid in bvids:
-    #         try:
-    #             async with session.get(
-    #                 f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}",
-    #                 timeout=aiohttp.ClientTimeout(total=5),
-    #             ) as resp:
-    #                 if resp.status == 200:
-    #                     data = await resp.json()
-    #                     if data.get("code") == 0:
-    #                         video_info_map[bvid] = {
-    #                             "title": data["data"].get("title", ""),
-    #                             "uploader": data["data"]
-    #                             .get("owner", {})
-    #                             .get("name", ""),
-    #                             "cover": data["data"].get("pic", ""),
-    #                             "desc": data["data"].get("desc", ""),
-    #                         }
-    #         except Exception:
-    #             pass
-
     formatted_entries = []
     for entry in entries:
         video_info = video_info_map.get(entry.bvid, {})
@@ -545,14 +539,16 @@ async def get_ranking_preview_async(
                 "coin": entry.coin,
                 "favorite": entry.favorite,
                 "share": entry.share,
+                "reply": entry.reply,
+                "danmaku": entry.danmaku,
+                "specialRank": str(entry.specialRank).lower(),
                 "totalScore": entry.totalScore,
                 "isNew": entry.isNew,
             }
         )
 
-    formatted_entries.sort(key=lambda x: x["rank"])
-
     return {
+        # Keep upstream aggregate statistics; total below counts visible entries.
         "stat": {
             "count": stat.count,
             "totalView": stat.totalView,
@@ -564,7 +560,7 @@ async def get_ranking_preview_async(
         "entries": formatted_entries,
         "page": page,
         "page_size": page_size,
-        "total": stat.count,
+        "total": total,
     }
 
 
@@ -580,12 +576,19 @@ def get_ranking_preview():
         )
         page = int(request.args.get("page", 1))
         page_size = int(request.args.get("page_size", 20))
+        show_special = request.args.get("show_special", "false").lower() == "true"
         auth_key = get_auth_key_from_request()
 
         result = asyncio.run(
             capnp.run(
                 get_ranking_preview_async(
-                    rank_name, index, contain_unexamined, auth_key, page, page_size
+                    rank_name,
+                    index,
+                    contain_unexamined,
+                    auth_key,
+                    page,
+                    page_size,
+                    show_special,
                 )
             )
         )
@@ -615,6 +618,7 @@ def api_debug():
                         "keyword": "Search in title/uploader",
                         "rank": "domestic/sv/utau/unrecorded/all",
                         "examined": "yes/no/unexamined",
+                        "is_republish": "true/false/empty (all)",
                         "bvid": "Filter by BV id",
                         "avid": "Filter by AV id",
                     },

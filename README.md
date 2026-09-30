@@ -39,3 +39,40 @@ uv run server.py
 
 - 添加 CORS 解决封面显示问题
 - 完成皮卡挑选，预览校审（注意预览校审逻辑是如果有已经计算好的数据，直接展示，只有用户提出请求时才重新计算。重新计算开销极大，大约需要运行几分钟，需要合理设计/设置权限防止浪费服务器资源）
+
+## Review workflow
+
+- 搬运筛选支持全部、仅搬运、排除搬运；服务端先筛选，再统计和分页。
+- 编辑面板一次只打开一个。点击面板外、取消、关闭、Escape 或切换页面会丢弃当前未保存草稿；此前“保存到本地”的修改仍然保留。
+- “收录排除”和“批量拒收”使用现有排除状态：`is_examined=true`、`ranks=[]`。保留搬运标记和 Staff 信息，不删除稿件。
+- 排除/拒收只进入本地待提交队列，可移除或清空；只有确认“提交更改”才发送后端。
+- 预览每条稿件使用横向列表，显示播放、点赞、分享、硬币、收藏、评论、弹幕；“新上榜”改为“新投稿”。
+- HOT/SH 默认隐藏，可勾选“显示 HOT / SH”。分页总数为筛选后的条数；顶部汇总统计保留整期原始统计。
+
+## Checks (no production service required)
+
+This application uses native browser ES modules, so it has no frontend bundling/build step.
+
+```bash
+# Python 3.13; submodules must be initialized as above
+uv sync --frozen
+uv run python -m unittest discover -s tests -v
+uv run python -m py_compile server.py quick_start.py
+
+# Node.js 20+; development-only dependencies
+npm ci
+npm run check
+npm test
+
+# Real Chromium layout/interaction coverage (all API requests are mocked)
+npx playwright install chromium
+npm run test:browser
+# Or use an existing browser:
+CHROMIUM_PATH=/usr/bin/chromium npm run test:browser
+
+# Optional local mock UI; only binds loopback, disables writes and remote fetches
+node tests/mock_server.cjs
+# http://127.0.0.1:25124
+```
+
+The Python suite mocks every RPC client and uses synthetic fixture data. DOM unit tests use jsdom with mocked fetch. Browser tests block non-local requests, including production APIs and external covers. The local fixture server never imports the production server or proxies requests.

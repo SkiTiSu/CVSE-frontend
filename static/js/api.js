@@ -78,9 +78,9 @@ export async function calculateRankings({ rank, index, containUnexamined = true,
     return parseJsonResponse(response, '计算失败');
 }
 
-export async function getRankingPreview({ rank, index, page, pageSize }) {
+export async function getRankingPreview({ rank, index, page, pageSize, showSpecial = false }) {
     const response = await fetch(
-        `/api/ranking-preview?rank=${rank}&index=${index}&page=${page}&page_size=${pageSize}${getAuthQueryParam()}`,
+        `/api/ranking-preview?rank=${rank}&index=${index}&page=${page}&page_size=${pageSize}&show_special=${showSpecial}${getAuthQueryParam()}`,
         { headers: getAuthHeaders() }
     );
     return parseJsonResponse(response, '获取预览失败');
