@@ -35,6 +35,9 @@ class CVSEApp {
         this.previewPageSize = 20;
         this.previewRank = 'domestic';
         this.previewIndex = 1;
+        this.previewShowSpecial = false;
+        this.editRequestId = 0;
+        this.previewRequestId = 0;
         this.totalItems = 0;
         this.totalPages = 0;
         this.stats = getEmptyStats();
@@ -48,6 +51,7 @@ class CVSEApp {
 
     init() {
         this.setupNavigation();
+        this.setupEditDismissal();
         this.setupFilters();
         this.setupChangesPanel();
         this.setupDebugPanel();
@@ -70,6 +74,7 @@ class CVSEApp {
                 document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
                 btn.classList.add('active');
                 document.getElementById(`${btn.dataset.page}-page`).classList.add('active');
+                this.closeEditPanel();
                 this.currentPage = btn.dataset.page;
             });
         });
@@ -101,12 +106,8 @@ class CVSEApp {
             this.previewPage = 1;
             this.getPreview();
         });
-        document.getElementById('previewRank').addEventListener('change', () => {
-            this.previewPage = 1;
-        });
-        document.getElementById('previewIndex').addEventListener('change', () => {
-            this.previewPage = 1;
-        });
+        document.getElementById('previewRank').addEventListener('change', () => this.invalidatePreview());
+        document.getElementById('previewIndex').addEventListener('change', () => this.invalidatePreview());
         document.getElementById('previewPrevPageBtn').addEventListener('click', () => this.previewChangePage(-1));
         document.getElementById('previewNextPageBtn').addEventListener('click', () => this.previewChangePage(1));
 
@@ -118,6 +119,19 @@ class CVSEApp {
         document.getElementById('selectVisibleBtn').addEventListener('click', () => this.selectVisibleVideos());
         document.getElementById('clearSelectionBtn').addEventListener('click', () => this.clearSelection());
         document.getElementById('batchMarkExaminedBtn').addEventListener('click', () => this.batchMarkExamined());
+        document.getElementById('batchRejectBtn').addEventListener('click', () => this.batchReject());
+        document.getElementById('previewShowSpecial').addEventListener('change', () => this.getPreview());
+    }
+
+    setupEditDismissal() {
+        // Capture runs before a new Edit button opens its panel.
+        document.addEventListener('click', (event) => {
+            const panel = document.getElementById('editPanel');
+            if (!panel || !panel.contains(event.target)) this.closeEditPanel();
+        }, true);
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') this.closeEditPanel();
+        });
     }
 
     setupChangesPanel() {
@@ -287,11 +301,12 @@ class CVSEApp {
                     keyword: filters.keyword,
                     rank: filters.rank,
                     examined: filters.examined,
+                    is_republish: filters.republish,
                     bvid: filters.bvid,
                     avid: filters.avid,
                 });
 
-                this.videos = result.data;
+                this.videos = result.data.map(video => this.changes.get(video.bvid) || video);
                 this.totalItems = result.total || 0;
                 this.totalPages = this.totalItems > 0 ? Math.ceil(this.totalItems / pageSize) : 0;
                 this.stats = { ...getEmptyStats(), ...(result.stats || {}) };
@@ -325,6 +340,7 @@ class CVSEApp {
             keyword: document.getElementById('searchKeyword').value.trim(),
             rank: document.getElementById('rankFilter').value,
             examined: document.getElementById('examinedFilter').value,
+            republish: document.getElementById('republishFilter').value,
             bvid: document.getElementById('bvidFilter').value.trim(),
             avid: document.getElementById('avidFilter').value.trim(),
         };
@@ -342,7 +358,7 @@ class CVSEApp {
     }
 
     filterVideos(videos = this.videos, filters) {
-        const { keyword, rank, examined, bvid, avid } = filters;
+        const { keyword, rank, examined, republish, bvid, avid } = filters;
 
         let videoData = videos;
         const normalizedKeyword = keyword.toLowerCase();
@@ -370,6 +386,10 @@ class CVSEApp {
             case 'exclusion':
                 videoData = videoData.filter(v => v.is_examined && v.ranks.length === 0);
                 break;
+        }
+
+        if (republish === 'true' || republish === 'false') {
+            videoData = videoData.filter(v => Boolean(v.is_republish) === (republish === 'true'));
         }
 
         if (bvid) {
@@ -440,6 +460,7 @@ class CVSEApp {
         document.getElementById('selectVisibleBtn').disabled = videos.length === 0;
         document.getElementById('clearSelectionBtn').disabled = selectionCount === 0;
         document.getElementById('batchMarkExaminedBtn').disabled = selectionCount === 0;
+        document.getElementById('batchRejectBtn').disabled = selectionCount === 0;
     }
 
     updatePagination() {
@@ -495,6 +516,7 @@ class CVSEApp {
     }
 
     openEditPanel(bvid) {
+        this.closeEditPanel();
         const video = this.videos.find(v => v.bvid === bvid);
         if (!video) return;
 
@@ -503,18 +525,19 @@ class CVSEApp {
         const panel = document.createElement('div');
         panel.className = 'edit-panel open';
         panel.id = 'editPanel';
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-label', `编辑 ${bvid}`);
         panel.innerHTML = createEditPanel(change, bvid);
 
         document.body.appendChild(panel);
         this.currentEditingBvid = bvid;
-        this.currentEditingData = { ...change };
+        this.currentEditingData = { ...change, ranks: [...(change.ranks || [])] };
 
-        panel.addEventListener('click', (e) => {
-            if (e.target === panel) this.closeEditPanel();
-        });
+        panel.querySelector('.edit-panel-close').focus();
     }
 
     closeEditPanel() {
+        this.editRequestId += 1;
         const panel = document.getElementById('editPanel');
         if (panel) panel.remove();
         this.currentEditingBvid = null;
@@ -543,16 +566,18 @@ class CVSEApp {
         if (!currentVideo) return;
 
         if (!this.originalVideos.has(bvid)) {
-            this.originalVideos.set(bvid, { ...currentVideo });
+            this.originalVideos.set(bvid, { ...currentVideo, ranks: [...(currentVideo.ranks || [])] });
         }
 
         const base = this.changes.get(bvid) || currentVideo;
         const updated = { ...base, ...patch };
+        updated.ranks = [...(updated.ranks || [])];
         this.changes.set(bvid, updated);
         this.videos = this.videos.map(v => v.bvid === bvid ? { ...v, ...patch } : v);
     }
 
     saveChange(bvid) {
+        if (bvid !== this.currentEditingBvid || !this.currentEditingData) return;
         const staffInfo = document.getElementById('staffInfo').value;
         this.currentEditingData.staff_info = staffInfo;
         this.applyLocalChange(bvid, this.currentEditingData);
@@ -590,6 +615,39 @@ class CVSEApp {
         this.selectedVideos.clear();
         this.applyRecordingFilters();
         this.updateChangesPanel();
+    }
+
+    batchReject() {
+        if (this.selectedVideos.size === 0) return;
+        this.closeEditPanel();
+        for (const bvid of this.selectedVideos) {
+            this.applyLocalChange(bvid, { ranks: [], is_examined: true });
+        }
+        this.selectedVideos.clear();
+        this.applyRecordingFilters();
+        this.updateChangesPanel();
+    }
+
+    excludeEditingVideo() {
+        if (!this.currentEditingData) return;
+        this.currentEditingData.ranks = [];
+        this.currentEditingData.is_examined = true;
+        this.saveChange(this.currentEditingBvid);
+    }
+
+    async excludeVideo(bvid) {
+        this.closeEditPanel();
+        try {
+            if (!this.videos.some(video => video.bvid === bvid)) {
+                const result = await getVideo(bvid);
+                if (!this.videos.some(video => video.bvid === bvid)) this.videos.push(result.data);
+            }
+            this.applyLocalChange(bvid, { ranks: [], is_examined: true });
+            this.applyRecordingFilters();
+            this.updateChangesPanel();
+        } catch (error) {
+            alert('获取视频数据失败: ' + error.message);
+        }
     }
 
     updateChangesPanel() {
@@ -721,6 +779,7 @@ class CVSEApp {
             return;
         }
 
+        const requestId = ++this.previewRequestId;
         // 显示进度条
         const overlay = document.getElementById('progressOverlay');
         const bar = document.getElementById('progressBar');
@@ -754,10 +813,16 @@ class CVSEApp {
 
         try {
             await calculateRankingsRequest({ rank, index, containUnexamined: true, lock: false });
+            if (requestId !== this.previewRequestId) {
+                clearInterval(timer);
+                overlay.classList.remove('open');
+                return;
+            }
 
             titleEl.textContent = `${rankName} 第${index}期排行榜计算完成，正在获取预览数据...`;
 
             // 计算完成后自动获取第1页预览
+            this.previewShowSpecial = document.getElementById('previewShowSpecial').checked;
             this.previewRank = rank;
             this.previewIndex = index;
             this.previewPage = 1;
@@ -768,6 +833,7 @@ class CVSEApp {
                 index,
                 page: 1,
                 pageSize: this.previewPageSize,
+                showSpecial: this.previewShowSpecial,
             });
 
             // 计算完成，进度条跳到 100% 并关闭
@@ -782,22 +848,35 @@ class CVSEApp {
             await new Promise(r => setTimeout(r, 600));
             overlay.classList.remove('open');
 
+            if (requestId !== this.previewRequestId) return;
             this.previewData = previewData.data;
-            this.previewTotal = this.previewData.total || this.previewData.stat.count;
+            this.previewTotal = this.previewData.total ?? this.previewData.stat.count;
             this.renderPreview();
         } catch (error) {
             clearInterval(timer);
             overlay.classList.remove('open');
+            if (requestId !== this.previewRequestId) return;
             preview.innerHTML = `<div class="empty-state">计算失败: ${error.message}</div>`;
         }
     }
 
+    invalidatePreview() {
+        this.previewRequestId += 1;
+        this.previewPage = 1;
+        this.previewData = null;
+        this.previewTotal = 0;
+        document.getElementById('rankingPreview').innerHTML = '<div class="empty-state">预览参数已更改，请点击“预览”获取数据</div>';
+        document.getElementById('previewPagination').style.display = 'none';
+    }
+
     // 独立预览功能：获取预览数据（不计算排行榜）
     async getPreview() {
+        const requestId = ++this.previewRequestId;
         const rank = document.getElementById('previewRank').value;
         const indexInput = Number.parseInt(document.getElementById('previewIndex').value, 10);
         const index = Number.isNaN(indexInput) ? 1 : Math.max(1, indexInput);
         document.getElementById('previewIndex').value = index;
+        this.previewShowSpecial = document.getElementById('previewShowSpecial').checked;
         this.previewRank = rank;
         this.previewIndex = index;
         this.previewPage = 1;
@@ -813,12 +892,15 @@ class CVSEApp {
                 index,
                 page: 1,
                 pageSize: this.previewPageSize,
+                showSpecial: this.previewShowSpecial,
             });
 
+            if (requestId !== this.previewRequestId) return;
             this.previewData = result.data;
-            this.previewTotal = result.data.total || result.data.stat.count;
+            this.previewTotal = result.data.total ?? result.data.stat.count;
             this.renderPreview();
         } catch (error) {
+            if (requestId !== this.previewRequestId) return;
             preview.innerHTML = `<div class="empty-state">获取预览失败: ${error.message}</div>`;
         }
     }
@@ -828,6 +910,7 @@ class CVSEApp {
         const newPage = this.previewPage + delta;
         const totalPages = Math.ceil(this.previewTotal / this.previewPageSize) || 1;
         if (newPage < 1 || newPage > totalPages) return;
+        const requestId = ++this.previewRequestId;
         this.previewPage = newPage;
 
         const preview = document.getElementById('rankingPreview');
@@ -841,11 +924,14 @@ class CVSEApp {
             index,
             page: this.previewPage,
             pageSize: this.previewPageSize,
+            showSpecial: this.previewShowSpecial,
         }).then(result => {
+            if (requestId !== this.previewRequestId) return;
             this.previewData = result.data;
-            this.previewTotal = result.data.total || result.data.stat.count;
+            this.previewTotal = result.data.total ?? result.data.stat.count;
             this.renderPreview();
         }).catch(error => {
+            if (requestId !== this.previewRequestId) return;
             preview.innerHTML = `<div class="empty-state">加载失败: ${error.message}</div>`;
         });
     }
@@ -883,21 +969,20 @@ class CVSEApp {
 
     // 通过 bvid 打开编辑面板（用于预览页面的编辑功能）
     async openEditPanelByBvid(bvid) {
-        // 先在当前已加载的视频中查找
-        let video = this.videos.find(v => v.bvid === bvid);
-        if (video) {
+        this.closeEditPanel();
+        const requestId = this.editRequestId;
+        if (this.videos.some(video => video.bvid === bvid)) {
             this.openEditPanel(bvid);
             return;
         }
-
-        // 未找到则从服务器获取
         try {
             const result = await getVideo(bvid);
-            // 将获取到的视频加入 videos 列表
-            this.videos.push(result.data);
+            // A newer edit, navigation, or cancellation must win over this response.
+            if (requestId !== this.editRequestId) return;
+            if (!this.videos.some(video => video.bvid === bvid)) this.videos.push(result.data);
             this.openEditPanel(bvid);
         } catch (error) {
-            alert('获取视频数据失败: ' + error.message);
+            if (requestId === this.editRequestId) alert('获取视频数据失败: ' + error.message);
         }
     }
 

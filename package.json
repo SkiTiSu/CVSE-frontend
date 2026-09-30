@@ -1,0 +1,10 @@
+{
+  "name": "cvse-frontend-checks",
+  "private": true,
+  "scripts": {
+    "check": "node --check static/js/app.js && node --check static/js/api.js && node --check static/js/renderers.js && node --check static/js/utils.js",
+    "test": "node --test tests/unit.test.cjs",
+    "test:browser": "node --test tests/frontend.test.cjs"
+  },
+  "devDependencies": { "jsdom": "^26.1.0", "playwright": "^1.58.2" }
+}

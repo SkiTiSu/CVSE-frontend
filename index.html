@@ -93,6 +93,14 @@
                                 </select>
                             </div>
                             <div class="filter-group">
+                                <label class="filter-label" for="republishFilter">搬运:</label>
+                                <select class="select" id="republishFilter">
+                                    <option value="">全部</option>
+                                    <option value="true">仅搬运</option>
+                                    <option value="false">排除搬运</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
                                 <span class="filter-label">BV号:</span>
                                 <input type="text" class="input" id="bvidFilter" placeholder="BV..." style="width: 130px;">
                             </div>
@@ -138,6 +146,7 @@
                         <button class="btn btn-secondary btn-sm" id="selectVisibleBtn">全选本页</button>
                         <button class="btn btn-secondary btn-sm" id="clearSelectionBtn">清空选择</button>
                         <button class="btn btn-success btn-sm" id="batchMarkExaminedBtn">批量标记为已收录</button>
+                        <button class="btn btn-danger btn-sm" id="batchRejectBtn" title="标记为已审核并排除所有期刊，保存到本地待提交">批量拒收</button>
                     </div>
                 </div>
                 <div class="video-list layout-double" id="videoList">
@@ -170,6 +179,7 @@
                             <option value="50">50条/页</option>
                             <option value="100">100条/页</option>
                         </select>
+                        <label class="checkbox-label"><input type="checkbox" id="previewShowSpecial">显示 HOT / SH</label>
                         <button class="btn btn-primary" id="getPreviewBtn">👀 预览</button>
                         <button class="btn btn-primary" id="calculateBtn">🧮 计算排行榜</button>
                     </div>
