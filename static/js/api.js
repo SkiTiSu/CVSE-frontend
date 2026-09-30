@@ -1,4 +1,4 @@
-import { getAuthHeaders, getAuthQueryParam } from './utils.js';
+import { getAuthHeaders } from './utils.js';
 
 async function parseJsonResponse(response, fallbackMessage) {
     let result;
@@ -33,12 +33,7 @@ export async function validateAuthKey(authKey) {
 
 export async function getVideos(params) {
     const query = new URLSearchParams(params);
-    const apiKey = localStorage.getItem('cvse_api_key');
-    if (apiKey) {
-        query.set('auth_key', apiKey);
-    }
-
-    const response = await fetch(`/api/videos?${query.toString()}`);
+    const response = await fetch(`/api/videos?${query.toString()}`, { headers: getAuthHeaders() });
     return parseJsonResponse(response, '加载失败');
 }
 
@@ -80,7 +75,7 @@ export async function calculateRankings({ rank, index, containUnexamined = true,
 
 export async function getRankingPreview({ rank, index, page, pageSize, showSpecial = false }) {
     const response = await fetch(
-        `/api/ranking-preview?rank=${rank}&index=${index}&page=${page}&page_size=${pageSize}&show_special=${showSpecial}${getAuthQueryParam()}`,
+        `/api/ranking-preview?rank=${rank}&index=${index}&page=${page}&page_size=${pageSize}&show_special=${showSpecial}`,
         { headers: getAuthHeaders() }
     );
     return parseJsonResponse(response, '获取预览失败');
@@ -106,11 +101,9 @@ export async function sendDebugRequest(endpoint, paramsStr) {
         const params = JSON.parse(paramsStr);
         const query = new URLSearchParams(params).toString();
         url = `/api/videos?${query}`;
-        if (authHeaders['X-Auth-Key']) {
-            url += `&auth_key=${encodeURIComponent(authHeaders['X-Auth-Key'])}`;
-        }
-    } else if (authHeaders['X-Auth-Key']) {
-        url += `?auth_key=${encodeURIComponent(authHeaders['X-Auth-Key'])}`;
+        options.headers = authHeaders;
+    } else {
+        options.headers = authHeaders;
     }
 
     const startTime = performance.now();

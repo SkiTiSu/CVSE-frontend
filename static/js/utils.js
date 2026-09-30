@@ -6,14 +6,6 @@ export function getAuthHeaders() {
     return {};
 }
 
-export function getAuthQueryParam() {
-    const apiKey = localStorage.getItem('cvse_api_key');
-    if (apiKey) {
-        return `&auth_key=${encodeURIComponent(apiKey)}`;
-    }
-    return '';
-}
-
 export function normalizeCoverUrl(url) {
     if (!url) return '';
     if (url.startsWith('//')) return `https:${url}`;
