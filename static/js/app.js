@@ -68,7 +68,7 @@ class CVSEApp {
     }
 
     setupNavigation() {
-        document.querySelectorAll('.nav-btn').forEach(btn => {
+        document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
                 document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));

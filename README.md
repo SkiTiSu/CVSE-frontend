@@ -76,3 +76,29 @@ node tests/mock_server.cjs
 ```
 
 The Python suite mocks every RPC client and uses synthetic fixture data. DOM unit tests use jsdom with mocked fetch. Browser tests block non-local requests, including production APIs and external covers. The local fixture server never imports the production server or proxies requests.
+
+## Temporary public entrypoint
+
+`uv run python public_server.py` serves the modified real application on loopback
+`127.0.0.1:25125`. Use this entrypoint (not `server.py`) for a requested public
+Quick Tunnel. It never reads a default, environment, or file-based API key.
+Mutations require a nonempty user-supplied `X-Auth-Key` header; the existing RPC
+service checks that key. Credentials in query strings are rejected. The UI does
+not claim a key is valid from an anonymous read operation.
+
+With the official Cloudflare binary installed, the requested temporary tunnel is:
+
+```bash
+cloudflared tunnel --no-autoupdate --url http://127.0.0.1:25125
+```
+
+Both processes must stay alive on the same network-capable host. Quick Tunnels
+are temporary and have no uptime guarantee. Browser-to-tunnel HTTPS does not add
+TLS to the existing raw TCP RPC leg at `47.104.152.246:8663`; deployment on an
+appropriate trusted network or a TLS-protected RPC transport is recommended.
+
+Validation in the current cloud execution environment: local health succeeded,
+but outbound RPC returned `Network is unreachable`. Quick Tunnel creation also
+failed resolving `api.trycloudflare.com` because outbound DNS was unreachable.
+No public URL was allocated, no live mutation was performed, and no key was
+read or configured. The user must enter any key themselves in the browser.

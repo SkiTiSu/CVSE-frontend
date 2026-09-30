@@ -283,11 +283,11 @@
                 <label class="form-label">API Key (Auth Token):</label>
                 <input type="password" class="input" id="apiKeyInput" placeholder="请输入 API Key" style="width: 100%;">
                 <p style="font-size: 0.75rem; color: var(--gray-500); margin-top: 0.5rem;">
-                    用于提交更改和计算排行榜等需要认证的操作。API Key 会保存在浏览器本地。
+                    临时公开实例不使用任何默认或服务器密钥。请自行输入个人密钥；仅保存在当前浏览器，通过请求头提交。HTTPS 只保护浏览器到隧道，原 RPC 后端为未加密 TCP。
                 </p>
             </div>
             <div class="form-group">
-                <button class="btn btn-secondary btn-sm" id="validateApiKeyBtn">🔐 验证 API Key</button>
+                <button class="btn btn-secondary btn-sm" id="validateApiKeyBtn">ℹ️ 密钥验证说明</button>
                 <span id="apiKeyStatus" style="margin-left: 0.5rem; font-size: 0.875rem;"></span>
             </div>
             <div class="form-group">
