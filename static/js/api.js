@@ -70,15 +70,59 @@ export async function calculateRankings({ rank, index, containUnexamined = true,
             lock,
         })
     });
-    return parseJsonResponse(response, '计算失败');
+    const result = await parseJsonResponse(response, '计算失败');
+    previewSpecialCache.clear();
+    return result;
 }
 
-export async function getRankingPreview({ rank, index, page, pageSize, showSpecial = false }) {
-    const response = await fetch(
-        `/api/ranking-preview?rank=${rank}&index=${index}&page=${page}&page_size=${pageSize}&show_special=${showSpecial}`,
-        { headers: getAuthHeaders() }
-    );
-    return parseJsonResponse(response, '获取预览失败');
+let pendingPreview = null;
+const previewSpecialCache = new Map();
+
+export function cancelRankingPreview() {
+    if (pendingPreview) {
+        pendingPreview.controller.abort();
+        pendingPreview = null;
+    }
+}
+
+export function getRankingPreview({ rank, index, page, pageSize }) {
+    const query = new URLSearchParams({ rank, index, page, page_size: pageSize });
+    const key = query.toString();
+    if (pendingPreview?.key === key) return pendingPreview.promise;
+    cancelRankingPreview();
+    const specialKey = JSON.stringify([rank, index]);
+    const cachedSpecial = previewSpecialCache.get(specialKey);
+    if (!cachedSpecial) query.set('include_special', 'true');
+    const controller = new AbortController();
+    const current = { key, controller, promise: null };
+    pendingPreview = current;
+    current.promise = (async () => {
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 20000);
+        try {
+            const response = await fetch(`/api/ranking-preview?${query.toString()}`, {
+                headers: getAuthHeaders(), signal: controller.signal
+            });
+            const result = await parseJsonResponse(response, '获取预览失败');
+            if (!controller.signal.aborted && result?.data) {
+                const special = cachedSpecial || { entries: result.data.special_entries || [], truncated: result.data.special_truncated || false };
+                if (!cachedSpecial) {
+                    if (previewSpecialCache.size >= 8) previewSpecialCache.delete(previewSpecialCache.keys().next().value);
+                    previewSpecialCache.set(specialKey, special);
+                }
+                result.data.special_entries = special.entries;
+                result.data.special_truncated = special.truncated;
+            }
+            return result;
+        } catch (error) {
+            if (timedOut) throw new Error('预览读取超时，请稍后手动重试');
+            throw error;
+        } finally {
+            clearTimeout(timer);
+            if (pendingPreview === current) pendingPreview = null;
+        }
+    })();
+    return current.promise;
 }
 
 export async function sendDebugRequest(endpoint, paramsStr) {

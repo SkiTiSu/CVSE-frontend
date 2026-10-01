@@ -44,10 +44,10 @@ uv run server.py
 
 - 搬运筛选支持全部、仅搬运、排除搬运；服务端先筛选，再统计和分页。
 - 编辑面板一次只打开一个。点击面板外、取消、关闭、Escape 或切换页面会丢弃当前未保存草稿；此前“保存到本地”的修改仍然保留。
-- “收录排除”和“批量拒收”使用现有排除状态：`is_examined=true`、`ranks=[]`。保留搬运标记和 Staff 信息，不删除稿件。
+- “收录排除”和“批量排除”使用现有排除状态：`is_examined=true`、`ranks=[]`。保留搬运标记和 Staff 信息，不删除稿件。
 - 排除/拒收只进入本地待提交队列，可移除或清空；只有确认“提交更改”才发送后端。
 - 预览每条稿件使用横向列表，显示播放、点赞、分享、硬币、收藏、评论、弹幕；“新上榜”改为“新投稿”。
-- HOT/SH 默认隐藏，可勾选“显示 HOT / SH”。分页总数为筛选后的条数；顶部汇总统计保留整期原始统计。
+- HOT/SH 默认隐藏，按 special_rank 区分；首次预览附带 rank 0 的 [0,1) 查询，详情/元数据各最多100条，浏览器缓存最多8组榜单/期数。切换显示和翻页不重复特殊查询。普通页仍按原始排名区间有界读取。
 
 ## Checks (no production service required)
 
@@ -102,3 +102,21 @@ but outbound RPC returned `Network is unreachable`. Quick Tunnel creation also
 failed resolving `api.trycloudflare.com` because outbound DNS was unreachable.
 No public URL was allocated, no live mutation was performed, and no key was
 read or configured. The user must enter any key themselves in the browser.
+
+## Bounded preview recovery
+
+Normal preview pages read only the requested rank interval (page size 1–100).
+Special rows use a separate [0,1) rank interval on the first uncached preview,
+with at most 100 detail and metadata records. The existing RPC has no index
+limit parameter: the rank-zero index response and upstream generation cannot
+be guaranteed to contain at most 100 records. No full-ranking scan is used.
+Repeated identical in-flight previews share one fetch. Changed criteria cancel
+the old browser fetch; browser cancellation does not guarantee that remote work
+has stopped. The read timeout remains 15 seconds and the browser deadline is
+20 seconds. There are separate one-request read and write lanes (two total),
+so a stalled write cannot consume the read lane. Writes are never retried.
+
+Source updates do not reload the running Waitress process. Applying the Python
+changes requires an explicitly authorized service restart; changing these files
+alone must not be treated as a production fix being active. Static JS may be
+served from disk before that restart, so deployment must be coordinated.

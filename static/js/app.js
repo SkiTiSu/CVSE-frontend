@@ -1,6 +1,7 @@
 import {
     calculateRankings as calculateRankingsRequest,
     getRankingPreview,
+    cancelRankingPreview,
     getVideo,
     getVideos,
     sendDebugRequest as sendDebugRequestApi,
@@ -120,7 +121,10 @@ class CVSEApp {
         document.getElementById('clearSelectionBtn').addEventListener('click', () => this.clearSelection());
         document.getElementById('batchMarkExaminedBtn').addEventListener('click', () => this.batchMarkExamined());
         document.getElementById('batchRejectBtn').addEventListener('click', () => this.batchReject());
-        document.getElementById('previewShowSpecial').addEventListener('change', () => this.getPreview());
+        document.getElementById('previewShowSpecial').addEventListener('change', () => {
+            this.previewShowSpecial = document.getElementById('previewShowSpecial').checked;
+            if (this.previewData) this.renderPreview();
+        });
     }
 
     setupEditDismissal() {
@@ -527,7 +531,7 @@ class CVSEApp {
         panel.id = 'editPanel';
         panel.setAttribute('role', 'dialog');
         panel.setAttribute('aria-label', `编辑 ${bvid}`);
-        panel.innerHTML = createEditPanel(change, bvid);
+        panel.innerHTML = createEditPanel(change, bvid, { allowExclusion: this.currentPage === 'preview' });
 
         document.body.appendChild(panel);
         this.currentEditingBvid = bvid;
@@ -765,6 +769,7 @@ class CVSEApp {
     }
 
     async calculateRankings() {
+        if (this.calculationInFlight) return;
         const rank = document.getElementById('previewRank').value;
         const indexInput = Number.parseInt(document.getElementById('previewIndex').value, 10);
         const index = Number.isNaN(indexInput) ? 1 : Math.max(1, indexInput);
@@ -775,10 +780,12 @@ class CVSEApp {
         // 确认对话框
         const rankNames = { domestic: '国产榜', sv: 'SV刊', utau: 'UTAU刊' };
         const rankName = rankNames[rank] || rank.toUpperCase();
-        if (!confirm(`确定要重新计算 ${rankName} 第 ${index} 期排行榜吗？\n\n计算过程可能需要约 ${totalDuration} 秒，请耐心等待。`)) {
+        if (!confirm(`确定要重新计算 ${rankName} 第 ${index} 期排行榜吗？\n\n计算过程可能需要约3～5分钟，请耐心等待。`)) {
             return;
         }
 
+        this.calculationInFlight = true;
+        cancelRankingPreview();
         const requestId = ++this.previewRequestId;
         // 显示进度条
         const overlay = document.getElementById('progressOverlay');
@@ -857,10 +864,13 @@ class CVSEApp {
             overlay.classList.remove('open');
             if (requestId !== this.previewRequestId) return;
             preview.innerHTML = `<div class="empty-state">计算失败: ${error.message}</div>`;
+        } finally {
+            this.calculationInFlight = false;
         }
     }
 
     invalidatePreview() {
+        cancelRankingPreview();
         this.previewRequestId += 1;
         this.previewPage = 1;
         this.previewData = null;
@@ -939,17 +949,16 @@ class CVSEApp {
     // 渲染预览数据
     renderPreview() {
         const preview = document.getElementById('rankingPreview');
-        const data = this.previewData;
-
-        if (!data || !data.entries || data.entries.length === 0) {
-            preview.innerHTML = createPreviewContent({
-                data,
-                previewRank: this.previewRank,
-                previewIndex: this.previewIndex,
-            });
-            document.getElementById('previewPagination').style.display = 'none';
-            return;
-        }
+        const raw = this.previewData;
+        const rows = raw ? [...(this.previewShowSpecial ? raw.special_entries || [] : []), ...(raw.entries || [])] : [];
+        const seen = new Set();
+        const data = raw ? { ...raw, entries: rows.filter(entry => {
+            const special = String(entry.special_rank ?? entry.specialRank ?? '').toLowerCase();
+            if (!this.previewShowSpecial && ['hot', 'sh'].includes(special)) return false;
+            if (seen.has(entry.bvid)) return false;
+            seen.add(entry.bvid);
+            return true;
+        }) } : null;
 
         preview.style.marginTop = '1rem';
         preview.innerHTML = createPreviewContent({
@@ -958,10 +967,17 @@ class CVSEApp {
             previewIndex: this.previewIndex,
         });
 
+        if (this.previewShowSpecial && raw?.special_truncated) {
+            const notice = document.createElement('div');
+            notice.className = 'empty-state';
+            notice.textContent = 'HOT/SH 超过显示上限，仅展示前 100 条';
+            preview.appendChild(notice);
+        }
+
         // 更新分页
         const totalPages = Math.ceil(this.previewTotal / this.previewPageSize) || 1;
         const pagination = document.getElementById('previewPagination');
-        pagination.style.display = 'flex';
+        pagination.style.display = this.previewTotal > 0 ? 'flex' : 'none';
         document.getElementById('previewPageInfo').textContent = `第 ${this.previewPage} 页 / 共 ${totalPages} 页（共 ${this.previewTotal} 项）`;
         document.getElementById('previewPrevPageBtn').disabled = this.previewPage <= 1;
         document.getElementById('previewNextPageBtn').disabled = this.previewPage >= totalPages;

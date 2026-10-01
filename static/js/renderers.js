@@ -66,7 +66,6 @@ export function createVideoCard(video, { hasChange = false, isSelected = false }
                         </div>
                         <div class="video-actions">
                             <button class="btn btn-primary btn-sm" onclick="app.openEditPanel(${bvidArg})">✏️ 编辑</button>
-                            <button class="btn btn-danger btn-sm" onclick="app.excludeVideo(${bvidArg})" title="排除所有期刊，保存到本地待提交">收录排除</button>
                             <button class="btn btn-secondary btn-sm" onclick="window.open('https://www.bilibili.com/video/${escapeHtml(bvid)}', '_blank')">🔗 跳转</button>
                         </div>
                     </div>
@@ -76,7 +75,7 @@ export function createVideoCard(video, { hasChange = false, isSelected = false }
     `;
 }
 
-export function createEditPanel(change, bvid) {
+export function createEditPanel(change, bvid, { allowExclusion = false } = {}) {
     const ranks = change.ranks || [];
     const bvidArg = jsArg(bvid);
 
@@ -140,7 +139,7 @@ export function createEditPanel(change, bvid) {
         </div>
         <div class="edit-panel-footer">
             <button class="btn btn-secondary" onclick="app.closeEditPanel()">取消</button>
-            <button class="btn btn-danger" onclick="app.excludeEditingVideo()" title="排除所有期刊，保存到本地待提交">收录排除</button>
+            ${allowExclusion ? '<button class="btn btn-secondary" onclick="app.excludeEditingVideo()" title="排除所有期刊，保存到本地待提交">收录排除</button>' : ''}
             <button class="btn btn-primary" onclick="app.saveChange(${bvidArg})">保存到本地</button>
         </div>
     `;
@@ -200,7 +199,7 @@ export function createPreviewCard(entry) {
     const fallbackCover = getCoverFallbackDataUrl();
     const bvid = String(entry.bvid ?? '');
     const bvidArg = jsArg(bvid);
-    const specialRank = String(entry.specialRank || 'normal').toLowerCase();
+    const specialRank = String(entry.special_rank ?? entry.specialRank ?? 'normal').toLowerCase();
     const rank = ['hot', 'sh'].includes(specialRank) ? specialRank.toUpperCase() : `#${entry.rank}`;
     const metrics = [
         ['view', '播放'], ['like', '点赞'], ['share', '分享'], ['coin', '硬币'],
@@ -227,7 +226,7 @@ export function createPreviewCard(entry) {
             </div>
             <div class="ranking-actions">
                 <button class="btn btn-primary btn-sm" onclick="app.openEditPanelByBvid(${bvidArg})">✏️ 编辑</button>
-                <button class="btn btn-danger btn-sm" onclick="app.excludeVideo(${bvidArg})" title="排除所有期刊，保存到本地待提交">收录排除</button>
+                <button class="btn btn-secondary btn-sm" onclick="app.excludeVideo(${bvidArg})" title="排除所有期刊，保存到本地待提交">收录排除</button>
                 <a class="btn btn-secondary btn-sm" href="https://www.bilibili.com/video/${escapeHtml(bvid)}" target="_blank" rel="noopener noreferrer">🔗 跳转</a>
             </div>
         </article>

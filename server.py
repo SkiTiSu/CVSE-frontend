@@ -458,8 +458,11 @@ async def get_ranking_preview_async(
     page: int = 1,
     page_size: int = 20,
     show_special: bool = False,
+    include_special: bool = False,
 ):
-    """Filter ranking preview entries before paginating the visible results."""
+    """Read only one bounded upstream rank interval; display filtering is local."""
+    if page < 1 or not 1 <= page_size <= 100:
+        raise ValueError("page must be >= 1 and page_size must be between 1 and 100")
     client = await CVSE_Client.create(CVSE_HOST, CVSE_PORT, auth_key)
     rank = Rank[rank_name.upper()]
     empty_result = {
@@ -482,37 +485,43 @@ async def get_ranking_preview_async(
         logging.warning(f"Error looking up ranking meta info: {e}")
         return empty_result
 
-    if stat.count == 0:
+    if stat.count == 0 and not include_special:
         return empty_result
 
-    # The RPC bounds are ranks, not offsets: [from_rank, to_rank). HOT/SH
-    # entries have rank 0. Fetch them too, then filter and paginate locally so
-    # special ranks and missing lookup results cannot leave gaps or wrong totals.
-    indices = list(
-        await client.getAllRankingInfo(rank, index, contain_unexamined, 0, stat.count + 1)
-    )
-    entries = []
-    for offset in range(0, len(indices), 4096):
-        entries.extend(
-            await client.lookupRankingInfo(
-                rank, index, contain_unexamined, indices[offset : offset + 4096]
-            )
+    # Normal pages retain their bounded rank interval; never scan the whole ranking.
+    from_rank = (page - 1) * page_size + 1
+    to_rank = min(from_rank + page_size, stat.count + 1)
+    indices = []
+    if from_rank < to_rank:
+        page_indices = await client.getAllRankingInfo(
+            rank, index, contain_unexamined, from_rank, to_rank
         )
-    if not show_special:
-        entries = [
-            entry
-            for entry in entries
-            if str(entry.specialRank).lower() not in {"hot", "sh"}
-        ]
+        indices = [page_indices[i] for i in range(min(len(page_indices), page_size))]
+    entries = list(await client.lookupRankingInfo(
+        rank, index, contain_unexamined, indices
+    ))[:page_size] if indices else []
     entries.sort(key=lambda entry: entry.rank)
-    total = len(entries)
-    start = (page - 1) * page_size
-    entries = entries[start : start + page_size]
+    meta_infos = await client.lookupMetaInfo(indices) if entries else []
 
-    # Metadata is needed only for the requested page, not every ranked video.
-    page_bvids = {entry.bvid for entry in entries}
-    page_indices = [entry for entry in indices if entry.bvid in page_bvids]
-    meta_infos = await client.lookupMetaInfo(page_indices) if page_indices else []
+    normal_count = len(entries)
+    special_truncated = False
+    if include_special:
+        # The schema specifies [from_rank, to_rank), so [0, 1) is rank zero only.
+        # It has no upstream limit field; bound subsequent detail/metadata work.
+        zero_indices = await client.getAllRankingInfo(rank, index, contain_unexamined, 0, 1)
+        special_truncated = len(zero_indices) > 100
+        selected = [zero_indices[i] for i in range(min(len(zero_indices), 100))]
+        if selected:
+            zero_entries = await client.lookupRankingInfo(rank, index, contain_unexamined, selected)
+            special_entries = [zero_entries[i] for i in range(min(len(zero_entries), 100))]
+            special_entries = [entry for entry in special_entries
+                               if entry.rank == 0 and str(entry.specialRank).lower() in {'hot', 'sh'}]
+            if special_entries:
+                special_bvids = {entry.bvid for entry in special_entries}
+                selected = [item for item in selected if item.bvid in special_bvids]
+                special_meta = await client.lookupMetaInfo(selected)
+                meta_infos = list(meta_infos) + list(special_meta)
+                entries.extend(special_entries)
 
     video_info_map = {}
     for meta_info in meta_infos:
@@ -542,13 +551,14 @@ async def get_ranking_preview_async(
                 "reply": entry.reply,
                 "danmaku": entry.danmaku,
                 "specialRank": str(entry.specialRank).lower(),
+                "special_rank": str(entry.specialRank).lower(),
                 "totalScore": entry.totalScore,
                 "isNew": entry.isNew,
             }
         )
 
     return {
-        # Keep upstream aggregate statistics; total below counts visible entries.
+        # Counts describe the original upstream ranking, not locally visible rows.
         "stat": {
             "count": stat.count,
             "totalView": stat.totalView,
@@ -557,10 +567,12 @@ async def get_ranking_preview_async(
             "totalFavorite": stat.totalFavorite,
             "totalNew": stat.totalNew,
         },
-        "entries": formatted_entries,
+        "entries": formatted_entries[:normal_count],
+        "special_entries": formatted_entries[normal_count:],
+        "special_truncated": special_truncated,
         "page": page,
         "page_size": page_size,
-        "total": total,
+        "total": stat.count,
     }
 
 
@@ -574,9 +586,15 @@ def get_ranking_preview():
         contain_unexamined = (
             request.args.get("contain_unexamined", "true").lower() == "true"
         )
-        page = int(request.args.get("page", 1))
-        page_size = int(request.args.get("page_size", 20))
+        try:
+            page = int(request.args.get("page", 1))
+            page_size = int(request.args.get("page_size", 20))
+        except (TypeError, ValueError):
+            return jsonify(success=False, error="page and page_size must be integers"), 400
+        if page < 1 or not 1 <= page_size <= 100:
+            return jsonify(success=False, error="page must be >= 1 and page_size must be between 1 and 100"), 400
         show_special = request.args.get("show_special", "false").lower() == "true"
+        include_special = request.args.get("include_special", "false").lower() == "true"
         auth_key = get_auth_key_from_request()
 
         result = asyncio.run(
@@ -589,6 +607,7 @@ def get_ranking_preview():
                     page,
                     page_size,
                     show_special,
+                    include_special,
                 )
             )
         )
