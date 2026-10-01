@@ -479,11 +479,8 @@ async def get_ranking_preview_async(
         "page_size": page_size,
         "total": 0,
     }
-    try:
-        stat = await client.lookupRankingMetaInfo(rank, index, contain_unexamined)
-    except Exception as e:
-        logging.warning(f"Error looking up ranking meta info: {e}")
-        return empty_result
+    # A failed RPC is not an empty ranking. Propagate it to the API error handler.
+    stat = await client.lookupRankingMetaInfo(rank, index, contain_unexamined)
 
     if stat.count == 0 and not include_special:
         return empty_result
