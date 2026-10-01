@@ -71,8 +71,8 @@ test('republish filter includes true/false/all in local results and server reque
  doc.querySelector('#republishFilter').value=value;await app.loadVideos({force:true});assert.equal(app.getVisibleVideos().length,count);assert.equal(new URL(requests.at(-1).url,'http://localhost').searchParams.get('is_republish'),value);}
 });
 test('preview defaults to hiding special rankings and keeps zero total authoritative',async t=>{
- const {app,doc,requests}=await setup(t);assert.equal(doc.querySelector('#previewShowSpecial').checked,false);await app.getPreview();assert.equal(app.previewTotal,0);assert.match(requests.at(-1).url,/show_special=false/);
- doc.querySelector('#previewShowSpecial').checked=true;await app.getPreview();assert.match(requests.at(-1).url,/show_special=true/);
+ const {app,doc,requests}=await setup(t);assert.equal(doc.querySelector('#previewShowSpecial').checked,false);await app.getPreview();assert.equal(app.previewTotal,0);assert.equal(new URL(requests.at(-1).url,'http://localhost').searchParams.has('show_special'),false);
+ doc.querySelector('#previewShowSpecial').checked=true;await app.getPreview();assert.equal(new URL(requests.at(-1).url,'http://localhost').searchParams.has('show_special'),false);
 });
 test('preview renders seven data labels, special rank labels, escaped values, and 新投稿',async t=>{
  const {w}=await setup(t);const html=w.createPreviewCard({...video('BV8'),rank:0,specialRank:'hot',title:'<script>alert(1)</script>',isNew:true,view:1,like:2,share:3,coin:4,favorite:5,reply:6,danmaku:7});
@@ -91,7 +91,7 @@ test('late preview response cannot overwrite newer HOT/SH visibility or page req
  const {w,app,doc}=await setup(t);const pending=[];
  w.fetch=url=>new Promise(resolve=>pending.push({url,resolve}));
  doc.querySelector('#previewShowSpecial').checked=true;const old=app.getPreview();
- doc.querySelector('#previewShowSpecial').checked=false;const latest=app.getPreview();
+ doc.querySelector('#previewShowSpecial').checked=false;doc.querySelector('#previewIndex').value='2';const latest=app.getPreview();
  const answer=entries=>({ok:true,json:async()=>({success:true,data:{entries,stat:{count:entries.length},total:entries.length}})});
  pending[1].resolve(answer([{...video('BV1'),rank:1,specialRank:'normal'}]));await latest;
  pending[0].resolve(answer([{...video('BV8'),rank:0,specialRank:'hot'}]));await old;
@@ -122,4 +122,54 @@ test('changing preview criteria dismisses stale loading and ignores pending resp
  doc.querySelector('#previewRank').value='sv';doc.querySelector('#previewRank').dispatchEvent(new w.Event('change',{bubbles:true}));
  assert.ok(doc.querySelector('#rankingPreview').textContent.includes('预览参数已更改'));finish({ok:true,json:async()=>({success:true,data:{entries:[{...video('BV1'),rank:1}],stat:{count:1},total:1}})});await old;
  assert.equal(app.previewData,null);assert.ok(doc.querySelector('#rankingPreview').textContent.includes('预览参数已更改'));
+});
+
+
+test('HOT/SH toggles only filter loaded rows with zero requests and keep empty-page navigation',async t=>{
+ const {w,app,doc,requests}=await setup(t);
+ app.previewData={entries:[{...video('BV8'),rank:1,specialRank:'hot'}],stat:{count:4100},total:4100};app.previewTotal=4100;app.previewPageSize=20;app.renderPreview();
+ const before=requests.length;assert.equal(doc.querySelectorAll('.ranking-row').length,0);assert.equal(doc.querySelector('#previewNextPageBtn').disabled,false);
+ changeCheckbox(w,'#previewShowSpecial',true);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
+ changeCheckbox(w,'#previewShowSpecial',false);assert.equal(doc.querySelectorAll('.ranking-row').length,0);assert.equal(requests.length,before);
+ assert.match(doc.querySelector('#previewPageInfo').textContent,/共 4100 项/);
+});
+
+test('identical in-flight preview clicks share one fetch; changed criteria abort old fetch',async t=>{
+ const {w,app,doc}=await setup(t);const pending=[];
+ w.fetch=(url,options)=>new Promise(resolve=>pending.push({url,options,resolve}));
+ const first=app.getPreview(),again=app.getPreview();assert.equal(pending.length,1);
+ doc.querySelector('#previewIndex').value='2';const latest=app.getPreview();assert.equal(pending.length,2);assert.equal(pending[0].options.signal.aborted,true);
+ const answer=bvid=>({ok:true,json:async()=>({success:true,data:{entries:[{...video(bvid),rank:1}],stat:{count:1},total:1}})});
+ pending[0].resolve(answer('BV1'));await Promise.all([first,again]);
+ const sameLatest=app.getPreview();assert.equal(pending.length,2); // old finally must not clear new flight
+ pending[1].resolve(answer('BV2'));await Promise.all([latest,sameLatest]);assert.equal(app.previewData.entries[0].bvid,'BV2');
+});
+
+test('preview timeout stops spinner without retrying',async t=>{
+ const {w,app,doc}=await setup(t);let calls=0;const original=w.setTimeout.bind(w);
+ w.setTimeout=(fn,ms)=>original(fn,ms===20000?0:ms);
+ w.fetch=(url,{signal})=>new Promise((resolve,reject)=>{calls++;signal.addEventListener('abort',()=>reject(new w.DOMException('Aborted','AbortError')));});
+ await app.getPreview();assert.equal(calls,1);assert.match(doc.querySelector('#rankingPreview').textContent,/预览读取超时/);assert.equal(doc.querySelector('#rankingPreview .loading'),null);
+});
+
+
+test('rank-zero HOT/SH uses special_rank and is cached across toggles and pages',async t=>{
+ const {w,app,doc}=await setup(t);const calls=[];
+ const special=[{...video('BV8'),rank:0,special_rank:'hot',specialRank:'normal'},{...video('BV9'),rank:0,special_rank:'sh'}];
+ w.fetch=async url=>{calls.push(url);return {ok:true,json:async()=>({success:true,data:{entries:[{...video('BV1'),rank:1,special_rank:'normal'}],special_entries:url.includes('include_special=true')?special:[],stat:{count:40},total:40}})};};
+ await app.getPreview();assert.equal(calls.length,1);assert.match(calls[0],/include_special=true/);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
+ changeCheckbox(w,'#previewShowSpecial',true);assert.equal(calls.length,1);assert.equal(doc.querySelectorAll('.ranking-row').length,3);assert.match(doc.querySelector('#rankingPreview').textContent,/HOT/);assert.match(doc.querySelector('#rankingPreview').textContent,/SH/);
+ changeCheckbox(w,'#previewShowSpecial',false);assert.equal(calls.length,1);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
+ app.previewChangePage(1);await new Promise(r=>setTimeout(r,0));assert.equal(calls.length,2);assert.ok(!calls[1].includes('include_special'));
+ changeCheckbox(w,'#previewShowSpecial',true);assert.equal(calls.length,2);assert.equal(doc.querySelectorAll('.ranking-row').length,3);
+});
+
+test('recording exposes red batch exclusion; preview keeps neutral single exclusion',async t=>{
+ const {w,app,doc}=await setup(t);
+ assert.equal(doc.querySelectorAll('#videoList button[onclick*="excludeVideo"]').length,0);
+ assert.equal(doc.querySelector('#batchRejectBtn').textContent,'批量排除');assert.ok(doc.querySelector('#batchRejectBtn').classList.contains('btn-danger'));
+ app.openEditPanel('BV1');assert.equal(doc.querySelector('#editPanel button[onclick*="excludeEditingVideo"]'),null);app.closeEditPanel();
+ app.currentPage='preview';app.openEditPanel('BV1');assert.ok(doc.querySelector('#editPanel button[onclick*="excludeEditingVideo"]').classList.contains('btn-secondary'));
+ const card=w.createPreviewCard({...video('BV8'),rank:0,special_rank:'hot'});const box=doc.createElement('div');box.innerHTML=card;assert.ok(box.querySelector('button[onclick*="excludeVideo"]').classList.contains('btn-secondary'));
+ assert.ok(!doc.body.textContent.includes('按原始排名区间'));
 });

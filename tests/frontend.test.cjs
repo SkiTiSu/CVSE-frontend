@@ -9,7 +9,8 @@ let server, browser, base;
 const video = (bvid, extra = {}) => ({ bvid, avid: `av${bvid.slice(2)}`, title: `视频 ${bvid}`, uploader: '测试UP', desc: '简介', tags: [], ranks: ['domestic'], is_examined: false, is_republish: false, staff_info: '原Staff', cover: '', ...extra });
 const videos = [video('BV1'), video('BV2', { is_republish: true }), video('BV3', { ranks: ['sv'] })];
 const entry = (bvid, rank, specialRank = 'normal') => ({ ...video(bvid), rank, specialRank, view: 101, like: 102, share: 103, coin: 104, favorite: 105, reply: 106, danmaku: 107, isNew: true, totalScore: 500 });
-const entries = [entry('BV8', 0, 'hot'), entry('BV9', 0, 'sh'), entry('BV1', 1), entry('BV2', 2)];
+const entries = [entry('BV1', 1), entry('BV2', 2)];
+const specials = [{...entry('BV8',0),special_rank:'hot'},{...entry('BV9',0),special_rank:'sh'}];
 before(async () => {
     server = http.createServer(async (req, res) => {
         try {
@@ -47,8 +48,7 @@ async function pageFor(t, { delay = {}, width = 1400 } = {}) {
             if (delay[bvid]) await new Promise(resolve => setTimeout(resolve, delay[bvid]));
             data = { success: true, data: video(bvid) };
         } else if (url.pathname === '/api/ranking-preview') {
-            const filtered = entries.filter(e => url.searchParams.get('show_special') === 'true' || e.specialRank === 'normal');
-            data = { success: true, data: { stat: { count: entries.length }, entries: filtered, total: filtered.length } };
+            data = { success: true, data: { stat: { count: entries.length }, entries, special_entries: url.searchParams.get('include_special') === 'true' ? specials : [], total: entries.length } };
         } else if (url.pathname === '/api/submit-changes') data = { success: true };
         else return route.abort();
         await route.fulfill({ json: data });
@@ -119,17 +119,20 @@ test('batch rejection stages selected videos only, keeps metadata, and is revers
     assert.deepEqual((await state(page)).videos, videos);
 });
 
-test('single exclusion and edit-panel exclusion use reversible pending changes', async t => {
+test('recording has red batch exclusion; preview keeps neutral single and editor exclusion', async t => {
     const { page } = await pageFor(t);
-    await page.locator('#videoList [data-bvid="BV1"]').getByText('收录排除', { exact: true }).click();
-    assert.equal((await state(page)).changes.length, 1);
-    assert.equal(await page.locator('#videoList [data-bvid="BV1"] .tag-examined').count(), 0);
-    await open(page, 'BV2');
+    assert.equal(await page.locator('#videoList button').filter({hasText:'收录排除'}).count(),0);
+    assert.equal(await page.locator('#batchRejectBtn').textContent(),'批量排除');
+    assert.match(await page.locator('#batchRejectBtn').getAttribute('class'),/btn-danger/);
+    await open(page);assert.equal(await page.locator('#editPanel').getByText('收录排除',{exact:true}).count(),0);
+    await page.keyboard.press('Escape');
+    await page.locator('[data-page="preview"]').click();await page.locator('#getPreviewBtn').click();await page.waitForSelector('.ranking-row');
+    const exclude=page.locator('.ranking-row').first().getByText('收录排除',{exact:true});assert.match(await exclude.getAttribute('class'),/btn-secondary/);await exclude.click();
+    assert.equal((await state(page)).changes.length,1);
+    await page.locator('.ranking-row').nth(1).getByText('编辑',{exact:false}).click();
     await page.locator('#staffInfo').fill('新Staff');
-    await page.locator('#editPanel').getByText('收录排除', { exact: true }).click();
-    const change = (await state(page)).changes.find(([bvid]) => bvid === 'BV2')[1];
-    assert.deepEqual(change.ranks, []); assert.equal(change.is_examined, true); assert.equal(change.staff_info, '新Staff');
-    assert.equal(await page.locator('#editPanel').count(), 0);
+    await page.locator('#editPanel').getByText('收录排除',{exact:true}).click();
+    const change=(await state(page)).changes.find(([bvid])=>bvid==='BV2')[1];assert.deepEqual(change.ranks,[]);assert.equal(change.is_examined,true);assert.equal(change.staff_info,'新Staff');
 });
 
 test('republish filter reaches API and includes both true and false modes', async t => {
@@ -154,9 +157,10 @@ test('preview horizontal rows show seven metrics, new submission label, and opti
     assert.equal(await page.locator('.ranking-row').first().getByText('新投稿', { exact: true }).count(), 1);
     const boxes = await page.locator('.ranking-row').evaluateAll(rows => rows.map(row => { const r = row.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width }; }));
     assert.equal(boxes[0].x, boxes[1].x); assert.ok(boxes[1].y > boxes[0].y); assert.ok(boxes[0].width > 800);
+    const previewRequestCount = requests.filter(r => r.url.pathname === '/api/ranking-preview').length;
     await page.locator('#previewShowSpecial').check();
     await page.waitForFunction(() => document.querySelectorAll('.ranking-row').length === 4);
-    assert.equal(requests.at(-1).url.searchParams.get('show_special'), 'true');
+    assert.equal(requests.filter(r => r.url.pathname === '/api/ranking-preview').length, previewRequestCount);
     assert.equal(await page.locator('.ranking-rank').getByText('HOT', { exact: true }).count(), 1);
     assert.equal(await page.locator('.ranking-rank').getByText('SH', { exact: true }).count(), 1);
 });
@@ -175,7 +179,8 @@ test('navigation cancels editing without losing saved work', async t => {
     const { page } = await pageFor(t);
     await open(page);
     await page.locator('#rank-sv input').check();
-    await page.locator('[data-page="preview"]').click();
+    await page.locator('[data-page="preview"]').focus();
+    await page.keyboard.press('Enter');
     assert.equal(await page.locator('#editPanel').count(), 0);
     assert.deepEqual((await state(page)).videos[0].ranks, ['domestic']);
 });
