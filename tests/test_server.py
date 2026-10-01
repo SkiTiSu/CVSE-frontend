@@ -202,6 +202,11 @@ class VideoFilterTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
 
 
 class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
+    async def test_failed_summary_is_not_an_empty_success(self):
+        self.client.lookupRankingMetaInfo.side_effect = RuntimeError('mock upstream unavailable')
+        with self.assertRaises(RuntimeError):
+            await self.fetch()
+
     async def fetch(self, **overrides):
         params = dict(
             rank_name="domestic", index=12, contain_unexamined=True,
@@ -287,14 +292,10 @@ class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["page_size"], 10)
         self.client.getAllRankingInfo.assert_not_awaited()
 
-    async def test_missing_calculation_has_consistent_pagination_fields(self):
+    async def test_missing_calculation_is_reported_as_failure(self):
         self.client.lookupRankingMetaInfo.side_effect = RuntimeError("No cached calculation")
-        with self.assertLogs(level="WARNING"):
-            result = await self.fetch(page=2, page_size=10)
-        self.assertEqual(result["entries"], [])
-        self.assertEqual(result["total"], 0)
-        self.assertEqual(result["page"], 2)
-        self.assertEqual(result["page_size"], 10)
+        with self.assertRaises(RuntimeError):
+            await self.fetch(page=2, page_size=10)
         self.client.getAllRankingInfo.assert_not_awaited()
 
     async def test_empty_index_lookup_skips_detail_requests(self):

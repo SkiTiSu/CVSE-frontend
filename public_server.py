@@ -96,6 +96,8 @@ def release_rpc_slot(error=None):
 def public_response_safety(response):
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['X-Content-Type-Options'] = 'nosniff'
+    if request.path == '/' or request.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'no-store'
     if request.path.startswith('/api/'):
         response.headers['Cache-Control'] = 'no-store'
         if g.get('backend_read_timeout', False):
