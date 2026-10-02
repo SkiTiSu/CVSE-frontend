@@ -94,7 +94,7 @@ cloudflared tunnel --no-autoupdate --url http://127.0.0.1:25125
 
 Both processes must stay alive on the same network-capable host. Quick Tunnels
 are temporary and have no uptime guarantee. Browser-to-tunnel HTTPS does not add
-TLS to the existing raw TCP RPC leg at `47.104.152.246:8663`; deployment on an
+TLS to the existing raw TCP RPC leg at `47.104.91.74:8663`; deployment on an
 appropriate trusted network or a TLS-protected RPC transport is recommended.
 
 Validation in the current cloud execution environment: local health succeeded,

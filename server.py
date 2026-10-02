@@ -40,7 +40,7 @@ limiter = Limiter(
     default_limits=["100 per minute"],
 )
 
-CVSE_HOST = "47.104.152.246"
+CVSE_HOST = "47.104.91.74"
 CVSE_PORT = "8663"
 
 
