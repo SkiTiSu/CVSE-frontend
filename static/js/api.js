@@ -97,9 +97,10 @@ export function cancelRankingPreview() {
     }
 }
 
-export function getRankingPreview({ rank, index, page, pageSize, videoId = '' }) {
+export function getRankingPreview({ rank, index, page, pageSize, videoId = '', cursor }) {
     const query = new URLSearchParams({ rank, index, page, page_size: pageSize });
     if (videoId) query.set('video_id', videoId);
+    if (cursor) { query.set('cursor_rank', cursor.rank); query.set('cursor_offset', cursor.offset); }
     const key = query.toString();
     if (pendingPreview?.key === key) return pendingPreview.promise;
     cancelRankingPreview();

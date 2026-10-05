@@ -1445,3 +1445,7 @@ body {
     body:has(.edit-panel.open) .changes-panel,
     body:has(.edit-panel.open) .changes-backdrop { visibility: hidden; }
 }
+
+@media (max-width: 768px) {
+    #previewPagination, #previewPaginationTop { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

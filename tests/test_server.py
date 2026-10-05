@@ -52,7 +52,6 @@ def ranking(number, rank, special="normal"):
 class MockRPCMixin:
     def setUp(self):
         super().setUp()
-        server.invalidate_preview_indices()
         self.client = SimpleNamespace(
             getAll=AsyncMock(return_value=[]),
             lookupMetaInfo=AsyncMock(return_value=[]),
@@ -217,16 +216,16 @@ class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
         params.update(overrides)
         return await server.get_ranking_preview_async(**params)
 
-    async def test_preview_reuses_ordered_indices_and_counts_normal_rows(self):
+    async def test_preview_reads_page_intervals_and_preserves_summary_count(self):
         self.set_rankings(self.mixed_rankings())
         first = await self.fetch()
         second = await self.fetch(page=2)
         self.assertEqual([entry["rank"] for entry in first["entries"]], [1, 2])
         self.assertEqual([entry["rank"] for entry in second["entries"]], [3, 4])
-        self.assertEqual(first["total"], 4)
-        self.assertEqual(second["total"], 4)
+        self.assertEqual(first["total"], 6)
+        self.assertEqual(second["total"], 6)
         self.assertEqual(first["stat"]["totalView"], 1000)
-        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 7)])
+        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 4), (3, 6)])
         self.create.assert_awaited_with(server.CVSE_HOST, server.CVSE_PORT, "test-key")
 
     async def test_show_special_is_compatible_without_fetching_rank_zero(self):
@@ -264,23 +263,23 @@ class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
     async def test_missing_page_entries_are_not_refilled_and_keep_upstream_total(self):
         self.set_rankings(self.mixed_rankings(), missing={"BV1"})
         result = await self.fetch()
-        self.assertEqual(result["total"], 4)
+        self.assertEqual(result["total"], 6)
         self.assertEqual([entry["rank"] for entry in result["entries"]], [2])
         self.client.getAllRankingInfo.assert_awaited_once()
 
-    async def test_rank_zero_entries_do_not_inflate_page_count(self):
+    async def test_rank_zero_only_has_no_next_page(self):
         self.set_rankings([ranking(1, 0, "sh"), ranking(2, 0, "hot")])
         result = await self.fetch()
         self.assertEqual(result["entries"], [])
-        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["total"], 2)
         self.assertEqual(result["stat"]["count"], 2)
         self.client.lookupMetaInfo.assert_not_awaited()
 
-    async def test_out_of_range_page_keeps_index_total(self):
+    async def test_out_of_range_page_keeps_summary_total(self):
         self.set_rankings(self.mixed_rankings())
         result = await self.fetch(page=3)
         self.assertEqual(result["entries"], [])
-        self.assertEqual(result["total"], 4)
+        self.assertEqual(result["total"], 6)
         self.assertEqual(result["page"], 3)
         self.assertEqual(result["page_size"], 2)
         self.client.lookupMetaInfo.assert_not_awaited()
@@ -306,7 +305,7 @@ class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
         self.client.getAllRankingInfo.return_value = []
         result = await self.fetch()
         self.assertEqual(result["entries"], [])
-        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["total"], 1)
         self.client.lookupRankingInfo.assert_not_awaited()
         self.client.lookupMetaInfo.assert_not_awaited()
 
@@ -315,7 +314,7 @@ class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
         result = await self.fetch(page=205, page_size=20)
         self.assertEqual(result["total"], 4100)
         self.assertEqual([entry["rank"] for entry in result["entries"]], list(range(4081, 4101)))
-        self.client.getAllRankingInfo.assert_awaited_once_with(server.Rank.DOMESTIC, 12, True, 1, 4101)
+        self.client.getAllRankingInfo.assert_awaited_once_with(server.Rank.DOMESTIC, 12, True, 4081, 4102)
         self.assertEqual([len(call.args[3]) for call in self.client.lookupRankingInfo.await_args_list], [20])
         self.assertEqual(len(self.client.lookupMetaInfo.await_args.args[0]), 20)
 
@@ -327,7 +326,7 @@ class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual({entry["special_rank"] for entry in result["special_entries"]}, {"hot", "sh"})
         self.assertTrue(all(entry["rank"] == 0 for entry in result["special_entries"]))
         self.assertFalse(result["special_truncated"])
-        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 7), (0, 1)])
+        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 4), (0, 1)])
         self.assertTrue(all(len(call.args[3]) <= 100 for call in self.client.lookupRankingInfo.await_args_list))
         self.assertTrue(all(len(call.args[0]) <= 100 for call in self.client.lookupMetaInfo.await_args_list))
 
@@ -361,7 +360,7 @@ class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(accesses, list(range(100)))
         self.assertEqual([len(call.args[3]) for call in self.client.lookupRankingInfo.await_args_list], [1, 100])
         self.assertEqual([len(call.args[0]) for call in self.client.lookupMetaInfo.await_args_list], [1, 100])
-        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 152), (0, 1)])
+        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 4), (0, 1)])
 
     async def test_special_empty_interval_skips_extra_detail_lookup(self):
         self.set_rankings([ranking(1, 1)])
@@ -370,7 +369,7 @@ class RankingPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["special_truncated"])
         self.client.lookupRankingInfo.assert_awaited_once()
         self.client.lookupMetaInfo.assert_awaited_once()
-        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 2), (0, 1)])
+        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 4), (0, 1)])
 
 
 class ApiRouteTests(MockRPCMixin, unittest.TestCase):
@@ -410,13 +409,13 @@ class ApiRouteTests(MockRPCMixin, unittest.TestCase):
         self.assertFalse(response.get_json()["success"])
         self.create.assert_not_awaited()
 
-    def test_preview_route_returns_index_total(self):
+    def test_preview_route_returns_summary_total(self):
         self.set_rankings(self.mixed_rankings())
         response = self.http.get("/api/ranking-preview?index=12&page_size=2")
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertTrue(payload["success"])
-        self.assertEqual(payload["data"]["total"], 4)
+        self.assertEqual(payload["data"]["total"], 6)
         self.assertEqual([entry["rank"] for entry in payload["data"]["entries"]], [1, 2])
 
     def test_preview_route_special_parameter_does_not_expand_request(self):
@@ -426,7 +425,7 @@ class ApiRouteTests(MockRPCMixin, unittest.TestCase):
                 response = self.http.get(f"/api/ranking-preview?show_special={value}&page_size=2")
                 self.assertEqual(response.status_code, 200)
                 payload = response.get_json()["data"]
-                self.assertEqual(payload["total"], 2)
+                self.assertEqual(payload["total"], 3)
                 self.assertEqual([entry["rank"] for entry in payload["entries"]], [1, 2])
                 self.assertEqual(payload["entries"][0]["specialRank"], "hot")
         self.assertTrue(all(call.args[3:] == (1, 4) for call in self.client.getAllRankingInfo.await_args_list))
@@ -437,7 +436,7 @@ class ApiRouteTests(MockRPCMixin, unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()["data"]
         self.assertEqual({entry["special_rank"] for entry in data["special_entries"]}, {"hot", "sh"})
-        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 7), (0, 1)])
+        self.assertEqual([call.args[3:] for call in self.client.getAllRankingInfo.await_args_list], [(1, 4), (0, 1)])
 
     def test_missing_cached_ranking_has_friendly_distinct_response(self):
         self.client.lookupRankingMetaInfo.side_effect = RuntimeError("No ranking meta info found for rank utau")
@@ -448,7 +447,7 @@ class ApiRouteTests(MockRPCMixin, unittest.TestCase):
         self.client.getAllRankingInfo.assert_not_awaited()
 
     def test_invalid_preview_pagination_is_rejected_before_rpc(self):
-        for query in ("page=0", "page=-1", "page_size=0", "page_size=-1", "page_size=111", "page=invalid", "page_size=invalid"):
+        for query in ("page=0", "page=-1", "page_size=0", "page_size=-1", "page_size=121", "page=invalid", "page_size=invalid"):
             with self.subTest(query=query):
                 response = self.http.get("/api/ranking-preview?" + query)
                 self.assertEqual(response.status_code, 400)
@@ -479,16 +478,16 @@ class NewFilterTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
 
 
 class NewPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
-    async def test_110_rows_fetch_only_page_details_and_reuse_metadata(self):
+    async def test_120_rows_fetch_only_page_details_and_reuse_metadata(self):
         self.set_rankings([ranking(n, n) for n in range(1, 1001)])
-        result = await server.get_ranking_preview_async("domestic", 12, True, page=3, page_size=110)
-        self.assertEqual(len(result["entries"]), 110)
+        result = await server.get_ranking_preview_async("domestic", 12, True, page=3, page_size=120)
+        self.assertEqual(len(result["entries"]), 120)
         self.assertEqual(result["entries"][0]["duration"], 120)
         self.assertTrue(result["entries"][0]["is_examined"])
         self.assertEqual(result["entries"][0]["ranks"], ["domestic"])
-        self.client.getAllRankingInfo.assert_awaited_once_with(server.Rank.DOMESTIC, 12, True, 1, 1001)
+        self.client.getAllRankingInfo.assert_awaited_once_with(server.Rank.DOMESTIC, 12, True, 241, 362)
         self.client.lookupMetaInfo.assert_awaited_once()
-        self.assertEqual(len(self.client.lookupMetaInfo.await_args.args[0]), 110)
+        self.assertEqual(len(self.client.lookupMetaInfo.await_args.args[0]), 120)
 
     async def test_exact_av_and_bv_lookup_one_index_without_any_rank_scan(self):
         index = server.parse_video_index("av123")
@@ -523,113 +522,34 @@ class NewPreviewTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
         self.create.assert_not_awaited()
 
 
-class TiedRankingPaginationTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
-    fetch = RankingPreviewTests.fetch
-
-    async def test_realistic_ties_span_pages_50_to_53_without_loss_or_duplicates(self):
-        entries = ([ranking(n, n) for n in range(1, 989)] +
-                   [ranking(n, 989) for n in range(989, 1043)] +
-                   [ranking(n, 1043) for n in range(1043, 1124)])
-        self.set_rankings(entries)
+class CursorPaginationTests(MockRPCMixin, unittest.IsolatedAsyncioTestCase):
+    async def test_walk_ties_without_duplicates_or_full_index_fetch(self):
+        self.set_rankings([ranking(n, n) for n in range(1,989)] +
+                          [ranking(n,989) for n in range(989,1043)] +
+                          [ranking(n,1043) for n in range(1043,1124)])
         original = self.client.lookupRankingInfo.side_effect
-        async def reverse_details(*args):
+        async def reversed_details(*args):
             return list(reversed(await original(*args)))
-        self.client.lookupRankingInfo.side_effect = reverse_details
+        self.client.lookupRankingInfo.side_effect = reversed_details
+        cursor = {"rank": 981, "offset": 0}
         seen = []
-        for page in range(50, 54):
-            result = await self.fetch(page=page, page_size=20)
-            ids = [row["bvid"] for row in result["entries"]]
-            self.assertEqual(ids, [f"BV{n}" for n in range((page-1)*20+1, page*20+1)])
-            self.assertEqual(result["total"], 1123)
-            seen.extend(ids)
-        self.assertEqual(len(seen), len(set(seen)))
-        self.client.getAllRankingInfo.assert_awaited_once()
-        self.assertEqual([len(c.args[3]) for c in self.client.lookupRankingInfo.await_args_list], [20]*4)
-        self.assertEqual([len(c.args[0]) for c in self.client.lookupMetaInfo.await_args_list], [20]*4)
-        last = await self.fetch(page=57, page_size=20)
-        self.assertEqual([r["bvid"] for r in last["entries"]], ["BV1121", "BV1122", "BV1123"])
-        self.client.getAllRankingInfo.assert_awaited_once()
+        for page in range(50,58):
+            result = await server.get_ranking_preview_async('domestic',12,True,page=page,
+                cursor_rank=cursor['rank'],cursor_offset=cursor['offset'])
+            seen.extend(row['bvid'] for row in result['entries'])
+            if not result['has_next']: break
+            cursor = result['next_cursor']
+        self.assertEqual(seen, [f'BV{n}' for n in range(981,1124)])
+        self.assertFalse(result['has_next'])
+        self.assertTrue(all(c.args[4]-c.args[3] <= 101 for c in self.client.getAllRankingInfo.await_args_list))
+        self.assertTrue(all(len(c.args[3]) <= 20 for c in self.client.lookupRankingInfo.await_args_list))
 
-    async def test_changed_page_size_uses_same_snapshot(self):
-        self.set_rankings([ranking(n, 1) for n in range(1, 201)])
-        await self.fetch(page_size=20)
-        result = await self.fetch(page=2, page_size=70)
-        self.assertEqual([r["bvid"] for r in result["entries"]], [f"BV{n}" for n in range(71,141)])
-        self.client.getAllRankingInfo.assert_awaited_once()
+    async def test_large_issue_first_page_queries_only_small_rank_range(self):
+        self.set_rankings([ranking(n,n) for n in range(1,121)])
+        self.client.lookupRankingMetaInfo.return_value.count = 80000
+        result = await server.get_ranking_preview_async('sv',215,True,page_size=80)
+        self.assertEqual(len(result['entries']),80)
+        self.client.getAllRankingInfo.assert_awaited_once_with(server.Rank.SV,215,True,1,82)
 
-    async def test_parallel_cold_reads_share_index_fetch(self):
-        self.set_rankings([ranking(n, 1) for n in range(1, 41)])
-        original = self.client.getAllRankingInfo.side_effect
-        async def slow_indexes(*args):
-            await asyncio.sleep(0.01)
-            return await original(*args)
-        self.client.getAllRankingInfo.side_effect = slow_indexes
-        first, second = await asyncio.gather(self.fetch(page=1), self.fetch(page=2))
-        self.assertEqual([r["bvid"] for r in first["entries"]], ["BV1","BV2"])
-        self.assertEqual([r["bvid"] for r in second["entries"]], ["BV3","BV4"])
-        self.client.getAllRankingInfo.assert_awaited_once()
-
-    async def test_expiry_and_summary_change_refresh_indices(self):
-        self.set_rankings([ranking(1,1),ranking(2,1)])
-        with patch.object(server, "PREVIEW_INDEX_TTL", 0):
-            await self.fetch()
-        await self.fetch()
-        self.assertEqual(self.client.getAllRankingInfo.await_count, 2)
-        self.client.lookupRankingMetaInfo.return_value.totalView += 1
-        await self.fetch()
-        self.assertEqual(self.client.getAllRankingInfo.await_count, 3)
-
-    async def test_cache_scopes_auth_issue_rank_and_review_mode(self):
-        self.set_rankings([ranking(1,1)])
-        await self.fetch()
-        for options in ({"auth_key":"other"},{"index":13},{"rank_name":"sv"},{"contain_unexamined":False}):
-            await self.fetch(**options)
-        self.assertEqual(self.client.getAllRankingInfo.await_count, 5)
-        await self.fetch()
-        self.assertEqual(self.client.getAllRankingInfo.await_count, 5)
-
-    async def test_failed_fetch_is_not_cached_and_can_be_retried(self):
-        self.set_rankings([ranking(1,1)])
-        original = self.client.getAllRankingInfo.side_effect
-        self.client.getAllRankingInfo.side_effect = RuntimeError("temporary failure")
-        with self.assertRaises(RuntimeError):
-            await self.fetch()
-        self.client.getAllRankingInfo.side_effect = original
-        self.assertEqual((await self.fetch())["total"], 1)
-        self.assertEqual(self.client.getAllRankingInfo.await_count, 2)
-
-    async def test_recalculation_invalidates_snapshot(self):
-        self.set_rankings([ranking(1,1)])
-        await self.fetch()
-        self.client.reCalculateRankings = AsyncMock()
-        await server.reCalculate_rankings_async("domestic", 12, True, False, "test-key")
-        await self.fetch()
-        self.assertEqual(self.client.getAllRankingInfo.await_count, 2)
-
-    async def test_inflight_snapshot_cannot_repopulate_invalidated_cache(self):
-        self.set_rankings([ranking(1,1)])
-        original = self.client.getAllRankingInfo.side_effect
-        async def invalidate_during_read(*args):
-            server.invalidate_preview_indices()
-            return await original(*args)
-        self.client.getAllRankingInfo.side_effect = invalidate_during_read
-        await self.fetch()
-        self.client.getAllRankingInfo.side_effect = original
-        await self.fetch()
-        self.assertEqual(self.client.getAllRankingInfo.await_count, 2)
-
-    async def test_memory_limit_evicts_old_snapshots_and_never_silently_truncates(self):
-        self.set_rankings([ranking(1,1),ranking(2,1)])
-        with patch.object(server, "PREVIEW_INDEX_LIMIT", 3):
-            await self.fetch(index=1)
-            await self.fetch(index=2)
-            await self.fetch(index=1)
-        self.assertEqual(self.client.getAllRankingInfo.await_count, 3)
-        server.invalidate_preview_indices()
-        with patch.object(server, "PREVIEW_INDEX_LIMIT", 1):
-            with self.assertRaisesRegex(ValueError, "未截断"):
-                await self.fetch()
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

@@ -48,7 +48,7 @@ async function pageFor(t, { delay = {}, width = 1400, previewTotal = entries.len
             if (delay[bvid]) await new Promise(resolve => setTimeout(resolve, delay[bvid]));
             data = { success: true, data: video(bvid) };
         } else if (url.pathname === '/api/ranking-preview') {
-            data = { success: true, data: { stat: { count: previewTotal }, entries: url.searchParams.has('video_id') ? entries.slice(0,1) : entries, search_id: url.searchParams.get('video_id') || '', special_entries: url.searchParams.get('include_special') === 'true' ? specials : [], total: previewTotal } };
+            data = { success: true, data: { stat: { count: previewTotal }, entries: url.searchParams.has('video_id') ? entries.slice(0,1) : entries, search_id: url.searchParams.get('video_id') || '', special_entries: url.searchParams.get('include_special') === 'true' ? specials : [], total: previewTotal, has_next: true, next_cursor: {rank:21,offset:0} } };
         } else if (url.pathname === '/api/submit-changes') data = { success: true };
         else return route.abort();
         await route.fulfill({ json: data });
@@ -208,9 +208,9 @@ test('new filters, logo, large page size, exact search and exclusion work in bro
     assert.equal(requests.at(-1).url.searchParams.get('rank'), 'sv,utau');
     assert.equal(await page.locator('.logo-icon').evaluate(img => img.complete && img.naturalWidth > 0), true);
     await page.locator('[data-page="preview"]').click();
-    await page.locator('#previewPageSize').selectOption('110');
+    await page.locator('#previewPageSize').selectOption('120');
     await page.waitForSelector('.ranking-row');
-    assert.equal(requests.at(-1).url.searchParams.get('page_size'), '110');
+    assert.equal(requests.at(-1).url.searchParams.get('page_size'), '120');
     await page.locator('.ranking-row').first().getByText('收录排除', {exact:true}).click();
     await page.waitForSelector('.ranking-excluded');
     assert.match(await page.locator('.ranking-excluded').first().textContent(), /待提交/);
@@ -232,11 +232,11 @@ test('both preview pagers stay synchronized and mobile expanded filter fits view
     await page.locator('[data-page="preview"]').click();
     await page.locator('#getPreviewBtn').click();
     await page.waitForSelector('.ranking-row');
-    await page.locator('#previewPageInputTop').fill('100');
-    await page.locator('#previewGoPageBtnTop').click();
-    await page.waitForFunction(() => app.previewPage===100);
-    assert.equal(requests.at(-1).url.searchParams.get('page'), '100');
-    assert.equal(await page.locator('#previewPageInput').inputValue(), '100');
+    assert.equal(await page.locator('#previewPageInputTop').count(), 0);
+    await page.locator('#previewNextPageBtnTop').click();
+    await page.waitForFunction(() => app.previewPage===2);
+    assert.equal(requests.at(-1).url.searchParams.get('page'), '2');
+    assert.match(await page.locator('#previewPageInfo').textContent(), /第 2 页/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({path:'/tmp/cvse-preview-mobile.png', fullPage:true});
 });

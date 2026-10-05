@@ -35,6 +35,7 @@ class CVSEApp {
         this.previewData = null;
         this.previewTotal = 0;
         this.previewPage = 1;
+        this.previewCursors = {1: {rank: 1, offset: 0}};
         this.previewPageSize = 20;
         this.previewRank = 'domestic';
         this.previewIndex = 1;
@@ -137,6 +138,7 @@ class CVSEApp {
         });
         document.getElementById('previewPageSize').addEventListener('change', () => {
             this.previewPage = 1;
+            this.previewCursors = {1: {rank: 1, offset: 0}};
             this.getPreview();
         });
         document.getElementById('previewRank').addEventListener('change', () => this.invalidatePreview());
@@ -145,13 +147,6 @@ class CVSEApp {
         document.getElementById('previewNextPageBtn').addEventListener('click', () => this.previewChangePage(1));
         document.getElementById('previewPrevPageBtnTop').addEventListener('click', () => this.previewChangePage(-1));
         document.getElementById('previewNextPageBtnTop').addEventListener('click', () => this.previewChangePage(1));
-        for (const suffix of ['', 'Top']) {
-            const input = document.getElementById(`previewPageInput${suffix}`);
-            document.getElementById(`previewGoPageBtn${suffix}`).addEventListener('click', () => this.previewGoPage(Number(input.value)));
-            input.addEventListener('keydown', event => {
-                if (event.key === 'Enter') this.previewGoPage(Number(input.value));
-            });
-        }
 
         document.getElementById('pikaSearchBtn').addEventListener('click', () => this.pikaSearch());
         document.getElementById('pikaKeyword').addEventListener('keypress', (e) => {
@@ -940,6 +935,7 @@ class CVSEApp {
             this.previewRank = rank;
             this.previewIndex = index;
             this.previewPage = 1;
+            this.previewCursors = {1: {rank: 1, offset: 0}};
             this.previewVideoId = '';
             document.getElementById('previewVideoId').value = '';
             this.previewPageSize = parseInt(document.getElementById('previewPageSize').value);
@@ -982,6 +978,7 @@ class CVSEApp {
         cancelRankingPreview();
         this.previewRequestId += 1;
         this.previewPage = 1;
+        this.previewCursors = {1: {rank: 1, offset: 0}};
         this.previewData = null;
         this.previewTotal = 0;
         this.setPreviewLoading(false);
@@ -1005,6 +1002,7 @@ class CVSEApp {
         this.previewRank = rank;
         this.previewIndex = index;
         this.previewPage = 1;
+        this.previewCursors = {1: {rank: 1, offset: 0}};
         this.previewPageSize = parseInt(document.getElementById('previewPageSize').value);
 
         const preview = document.getElementById('rankingPreview');
@@ -1041,12 +1039,9 @@ class CVSEApp {
         for (const id of ['getPreviewBtn', 'clearPreviewSearch', 'previewPageSize', 'previewShowSpecial']) {
             document.getElementById(id).disabled = loading;
         }
-        const totalPages = Math.ceil(this.previewTotal / this.previewPageSize) || 1;
         for (const suffix of ['', 'Top']) {
             document.getElementById(`previewPrevPageBtn${suffix}`).disabled = loading || this.previewPage <= 1;
-            document.getElementById(`previewNextPageBtn${suffix}`).disabled = loading || this.previewPage >= totalPages;
-            document.getElementById(`previewGoPageBtn${suffix}`).disabled = loading;
-            document.getElementById(`previewPageInput${suffix}`).disabled = loading;
+            document.getElementById(`previewNextPageBtn${suffix}`).disabled = loading || !this.previewData?.has_next;
         }
     }
 
@@ -1056,8 +1051,7 @@ class CVSEApp {
     }
 
     previewGoPage(newPage) {
-        const totalPages = Math.ceil(this.previewTotal / this.previewPageSize) || 1;
-        if (!Number.isInteger(newPage) || newPage < 1 || newPage > totalPages || newPage === this.previewPage || this.previewVideoId || this.previewLoading) return;
+        if (!Number.isInteger(newPage) || newPage < 1 || !this.previewCursors[newPage] || Math.abs(newPage - this.previewPage) !== 1 || this.previewVideoId || this.previewLoading) return;
         const requestId = ++this.previewRequestId;
         this.setPreviewLoading(true);
         this.previewData = null;
@@ -1072,6 +1066,7 @@ class CVSEApp {
             rank,
             index,
             page: newPage,
+            cursor: this.previewCursors[newPage],
             pageSize: this.previewPageSize,
             showSpecial: this.previewShowSpecial,
         }).then(result => {
@@ -1090,6 +1085,7 @@ class CVSEApp {
 
     // 渲染预览数据
     renderPreview() {
+        if (this.previewData?.next_cursor) this.previewCursors[this.previewPage + 1] = this.previewData.next_cursor;
         const preview = document.getElementById('rankingPreview');
         const raw = this.previewData;
         const showSpecial = this.previewShowSpecial && this.previewPage === 1 && !raw?.search_id;
@@ -1121,14 +1117,11 @@ class CVSEApp {
         }
 
         // 更新分页
-        const totalPages = Math.ceil(this.previewTotal / this.previewPageSize) || 1;
         for (const suffix of ['', 'Top']) {
             document.getElementById(`previewPagination${suffix}`).style.display = this.previewTotal > 0 && !raw?.search_id ? 'flex' : 'none';
-            document.getElementById(`previewPageInfo${suffix}`).textContent = `第 ${this.previewPage} 页 / 共 ${totalPages} 页（共 ${this.previewTotal} 项）`;
+            document.getElementById(`previewPageInfo${suffix}`).textContent = `第 ${this.previewPage} 页`;
             document.getElementById(`previewPrevPageBtn${suffix}`).disabled = this.previewPage <= 1;
-            document.getElementById(`previewNextPageBtn${suffix}`).disabled = this.previewPage >= totalPages;
-            document.getElementById(`previewPageInput${suffix}`).value = this.previewPage;
-            document.getElementById(`previewPageInput${suffix}`).max = totalPages;
+            document.getElementById(`previewNextPageBtn${suffix}`).disabled = !this.previewData?.has_next;
         }
     }
 

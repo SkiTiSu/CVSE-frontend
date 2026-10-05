@@ -96,7 +96,7 @@ test('late preview response cannot overwrite newer HOT/SH visibility or page req
  pending[1].resolve(answer([{...video('BV1'),rank:1,specialRank:'normal'}]));await latest;
  pending[0].resolve(answer([{...video('BV8'),rank:0,specialRank:'hot'}]));await old;
  assert.equal(app.previewData.entries[0].bvid,'BV1');assert.equal(app.previewShowSpecial,false);assert.ok(!doc.querySelector('#rankingPreview').textContent.includes('HOT'));
- app.previewTotal=40;app.previewPageSize=20;app.previewChangePage(1);
+ app.previewTotal=40;app.previewPageSize=20;app.previewCursors[2]={rank:21,offset:0};app.previewChangePage(1);
  const newest=app.getPreview();pending[3].resolve(answer([{...video('BV2'),rank:2}]));await newest;
  pending[2].resolve(answer([{...video('BV3'),rank:3}]));await new Promise(resolve=>setTimeout(resolve,0));assert.equal(app.previewData.entries[0].bvid,'BV2');
 });
@@ -127,11 +127,11 @@ test('changing preview criteria dismisses stale loading and ignores pending resp
 
 test('HOT/SH toggles only filter loaded rows with zero requests and keep empty-page navigation',async t=>{
  const {w,app,doc,requests}=await setup(t);
- app.previewData={entries:[{...video('BV8'),rank:1,specialRank:'hot'}],stat:{count:4100},total:4100};app.previewTotal=4100;app.previewPageSize=20;app.renderPreview();
+ app.previewData={entries:[{...video('BV8'),rank:1,specialRank:'hot'}],stat:{count:4100},total:4100,has_next:true,next_cursor:{rank:21,offset:0}};app.previewTotal=4100;app.previewPageSize=20;app.renderPreview();
  const before=requests.length;assert.equal(doc.querySelectorAll('.ranking-row').length,0);assert.equal(doc.querySelector('#previewNextPageBtn').disabled,false);
  changeCheckbox(w,'#previewShowSpecial',true);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
  changeCheckbox(w,'#previewShowSpecial',false);assert.equal(doc.querySelectorAll('.ranking-row').length,0);assert.equal(requests.length,before);
- assert.match(doc.querySelector('#previewPageInfo').textContent,/共 4100 项/);
+ assert.match(doc.querySelector('#previewPageInfo').textContent,/第 1 页/);
 });
 
 test('identical in-flight preview clicks share one fetch; changed criteria abort old fetch',async t=>{
@@ -156,7 +156,7 @@ test('preview timeout stops spinner without retrying',async t=>{
 test('rank-zero HOT/SH uses special_rank and is cached across toggles and pages',async t=>{
  const {w,app,doc}=await setup(t);const calls=[];
  const special=[{...video('BV8'),rank:0,special_rank:'hot',specialRank:'normal'},{...video('BV9'),rank:0,special_rank:'sh'}];
- w.fetch=async url=>{calls.push(url);return {ok:true,json:async()=>({success:true,data:{entries:[{...video('BV1'),rank:1,special_rank:'normal'}],special_entries:url.includes('include_special=true')?special:[],stat:{count:40},total:40}})};};
+ w.fetch=async url=>{calls.push(url);return {ok:true,json:async()=>({success:true,data:{entries:[{...video('BV1'),rank:1,special_rank:'normal'}],special_entries:url.includes('include_special=true')?special:[],next_cursor:{rank:21,offset:0},has_next:true,stat:{count:40},total:40}})};};
  await app.getPreview();assert.equal(calls.length,1);assert.match(calls[0],/include_special=true/);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
  changeCheckbox(w,'#previewShowSpecial',true);assert.equal(calls.length,1);assert.equal(doc.querySelectorAll('.ranking-row').length,3);assert.match(doc.querySelector('#rankingPreview').textContent,/HOT/);assert.match(doc.querySelector('#rankingPreview').textContent,/SH/);
  changeCheckbox(w,'#previewShowSpecial',false);assert.equal(calls.length,1);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
@@ -203,12 +203,14 @@ test('preview exact search is one request, skips special scan, and shows matchin
  doc.querySelector('#previewVideoId').value='BV1';await app.getPreview();assert.equal(calls.length,1);
 });
 
-test('preview jumps directly once, syncs both bars, rejects invalid and duplicate page jumps',async t=>{
+test('preview uses cursor navigation and exposes no jump controls',async t=>{
  const {w,app,doc}=await setup(t);const calls=[];
- w.fetch=async url=>{calls.push(url);return {ok:true,json:async()=>({success:true,data:{entries:[{...video('BV1'),rank:81}],stat:{count:4100},total:4100}})};};
- await app.getPreview();await app.previewGoPage(100);assert.equal(calls.length,2);assert.equal(new URL(calls[1],'http://localhost').searchParams.get('page'),'100');assert.equal(app.previewPage,100);
- for(const suffix of ['', 'Top']){assert.equal(doc.querySelector(`#previewPageInput${suffix}`).value,'100');assert.match(doc.querySelector(`#previewPageInfo${suffix}`).textContent,/第 100 页/);}
- for(const page of [0,206,1.5,100,NaN]) await app.previewGoPage(page);assert.equal(calls.length,2);
+ w.fetch=async url=>{calls.push(url);return {ok:true,json:async()=>({success:true,data:{entries:[],stat:{count:4100},total:4100,has_next:true,next_cursor:{rank:20,offset:1}}})};};
+ await app.getPreview();await app.previewGoPage(100);assert.equal(calls.length,1);
+ await app.previewChangePage(1);assert.equal(calls.length,2);
+ const query=new URL(calls[1],'http://localhost').searchParams;
+ assert.equal(query.get('cursor_rank'),'20');assert.equal(query.get('cursor_offset'),'1');
+ for(const suffix of ['', 'Top']) {assert.equal(doc.querySelector(`#previewPageInput${suffix}`),null);assert.match(doc.querySelector(`#previewPageInfo${suffix}`).textContent,/第 2 页/);}
 });
 
 test('preview exclusion and undo update immediately without reloading; submit preserves marker',async t=>{
@@ -226,9 +228,9 @@ test('preview empty and failure states are distinct and error detail is escaped'
  assert.match(html,/暂时无法读取/);assert.ok(!html.includes('<img'));assert.ok(!html.includes('暂无视频数据'));
 });
 
-test('70 and 110 page sizes reach API once and preserve bounded parameter',async t=>{
+test('80 and 120 page sizes reach API once and preserve bounded parameter',async t=>{
  const {app,doc,requests}=await setup(t);
- for(const size of ['70','110']){doc.querySelector('#previewPageSize').value=size;const before=requests.length;await app.getPreview();assert.equal(requests.length,before+1);assert.equal(new URL(requests.at(-1).url,'http://localhost').searchParams.get('page_size'),size);}
+ for(const size of ['80','120']){doc.querySelector('#previewPageSize').value=size;const before=requests.length;await app.getPreview();assert.equal(requests.length,before+1);assert.equal(new URL(requests.at(-1).url,'http://localhost').searchParams.get('page_size'),size);}
 });
 
 
@@ -255,7 +257,7 @@ test('clear recording filters resets today and page with one request, preserving
 
 test('special rows and truncation notice appear only on first page without fetching on toggle',async t=>{
  const {w,app,doc,requests}=await setup(t);
- app.previewData={entries:[{...video('BV1'),rank:21},{...video('BV2'),rank:22,special_rank:'hot'}],special_entries:[{...video('BV8'),rank:0,special_rank:'sh'}],special_truncated:true,stat:{count:40},total:40};app.previewTotal=40;app.previewPage=2;
+ app.previewData={entries:[{...video('BV1'),rank:21},{...video('BV2'),rank:22,special_rank:'hot'}],special_entries:[{...video('BV8'),rank:0,special_rank:'sh'}],special_truncated:true,next_cursor:{rank:21,offset:0},has_next:true,stat:{count:40},total:40};app.previewTotal=40;app.previewPage=2;
  const before=requests.length;changeCheckbox(w,'#previewShowSpecial',true);
  assert.equal(doc.querySelectorAll('.ranking-row').length,1);assert.ok(!doc.querySelector('#rankingPreview').textContent.includes('超过显示上限'));
  app.previewPage=1;app.renderPreview();assert.equal(doc.querySelectorAll('.ranking-row').length,3);assert.match(doc.querySelector('#rankingPreview').textContent,/超过显示上限/);

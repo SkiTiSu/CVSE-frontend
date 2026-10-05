@@ -10,11 +10,6 @@ import asyncio
 import logging
 import os
 import re
-import hashlib
-import threading
-import time
-from collections import OrderedDict
-from concurrent.futures import Future
 from datetime import date, datetime, timedelta
 
 import aiohttp
@@ -49,71 +44,6 @@ limiter = Limiter(
 
 CVSE_HOST = "47.104.91.74"
 CVSE_PORT = "8663"
-
-# Only detached ID strings are shared across requests/event loops, never RPC readers.
-PREVIEW_INDEX_TTL = 300
-PREVIEW_INDEX_LIMIT = 200_000
-_preview_indices = OrderedDict()
-_preview_index_pending = {}
-_preview_index_lock = threading.Lock()
-_preview_index_epoch = 0
-
-
-def invalidate_preview_indices():
-    global _preview_index_epoch
-    with _preview_index_lock:
-        _preview_index_epoch += 1
-        _preview_indices.clear()
-
-
-async def get_preview_indices(client, rank, index, contain_unexamined, auth_key, stat):
-    """Reuse the upstream rank-ordered ID snapshot; ties occupy separate row slots."""
-    signature = tuple(getattr(stat, field) for field in
-                      ("count", "totalView", "totalLike", "totalCoin", "totalFavorite", "totalNew"))
-    identity = (rank.name, index, contain_unexamined,
-                hashlib.sha256((auth_key or "").encode()).digest())
-    with _preview_index_lock:
-        key = (_preview_index_epoch, identity, signature)
-        cached = _preview_indices.get(identity)
-        if cached and cached[0] == signature and cached[1] > time.monotonic():
-            _preview_indices.move_to_end(identity)
-            return cached[2]
-        pending = _preview_index_pending.get(key)
-        owner = pending is None
-        if owner:
-            pending = Future()
-            _preview_index_pending[key] = pending
-    if not owner:
-        return await asyncio.shield(asyncio.wrap_future(pending))
-    try:
-        raw = await client.getAllRankingInfo(
-            rank, index, contain_unexamined, 1, min(int(stat.count) + 1, 2147483647)
-        ) if stat.count else []
-        # RPC cannot limit its index response. Bound retained memory and never truncate silently.
-        if len(raw) > PREVIEW_INDEX_LIMIT:
-            raise ValueError("榜单索引超过当前预览容量，请联系维护者调整；未截断稿件。")
-        seen = set()
-        detached = []
-        for item in raw:
-            if item.bvid not in seen:
-                seen.add(item.bvid)
-                detached.append((str(item.avid), str(item.bvid)))
-        snapshot = tuple(detached)
-        with _preview_index_lock:
-            if key[0] == _preview_index_epoch:
-                _preview_indices.pop(identity, None)
-                while _preview_indices and (len(_preview_indices) >= 8 or
-                        sum(len(entry[2]) for entry in _preview_indices.values()) + len(snapshot) > PREVIEW_INDEX_LIMIT):
-                    _preview_indices.popitem(last=False)
-                _preview_indices[identity] = (signature, time.monotonic() + PREVIEW_INDEX_TTL, snapshot)
-            pending.set_result(snapshot)
-        return snapshot
-    except BaseException as error:
-        pending.set_exception(error)
-        raise
-    finally:
-        with _preview_index_lock:
-            _preview_index_pending.pop(key, None)
 
 
 def format_video_entry(entry):
@@ -335,11 +265,7 @@ async def reCalculate_rankings_async(
     """recalculate rankings"""
     rank = Rank[rank_name.upper()]
     client = await CVSE_Client.create(CVSE_HOST, CVSE_PORT, auth_key)
-    invalidate_preview_indices()
-    try:
-        await client.reCalculateRankings(rank, index, contain_unexamined, lock)
-    finally:
-        invalidate_preview_indices()
+    await client.reCalculateRankings(rank, index, contain_unexamined, lock)
     return f"Recalculated rankings for {rank_name}"
 
 
@@ -555,10 +481,12 @@ async def get_ranking_preview_async(
     show_special: bool = False,
     include_special: bool = False,
     video_id: str = "",
+    cursor_rank: int | None = None,
+    cursor_offset: int = 0,
 ):
-    """Page by cached ordered IDs, fetching details only for the requested rows."""
-    if page < 1 or not 1 <= page_size <= 110:
-        raise ValueError("page must be >= 1 and page_size must be between 1 and 110")
+    """Read a bounded rank interval and continue within ties using a cursor."""
+    if page < 1 or not 1 <= page_size <= 120:
+        raise ValueError("page must be >= 1 and page_size must be between 1 and 120")
     search_index = parse_video_index(video_id) if video_id else None
     client = await CVSE_Client.create(CVSE_HOST, CVSE_PORT, auth_key)
     rank = Rank[rank_name.upper()]
@@ -576,6 +504,8 @@ async def get_ranking_preview_async(
         "page_size": page_size,
         "total": 0,
         "search_id": video_id,
+        "has_next": False,
+        "next_cursor": None,
     }
     # A failed RPC is not an empty ranking. Propagate it to the API error handler.
     stat = await client.lookupRankingMetaInfo(rank, index, contain_unexamined)
@@ -584,23 +514,33 @@ async def get_ranking_preview_async(
         return empty_result
 
     # Rank is not an offset: competition ties leave gaps (989 x54 -> 1043).
-    # The RPC returns rank-ordered indexes; reuse their row positions across pages.
+    # The RPC returns rank-ordered indexes; cursors retain the offset within ties.
     start = (page - 1) * page_size
     indices = []
     total = stat.count
     if search_index:
         indices = [Index_to_capnp(search_index)]
     else:
-        snapshot = await get_preview_indices(client, rank, index, contain_unexamined, auth_key, stat)
-        total = len(snapshot)
-        indices = [Index_to_capnp({"avid": avid, "bvid": bvid})
-                   for avid, bvid in snapshot[start:start + page_size]]
+        # Cursor keeps our position within a tied rank without loading the whole issue.
+        cursor_rank = cursor_rank or start + 1
+        raw = await client.getAllRankingInfo(
+            rank, index, contain_unexamined, cursor_rank,
+            min(cursor_rank + cursor_offset + page_size + 1, 2147483647))
+        indices = list(raw)[cursor_offset:cursor_offset + page_size]
+    has_next = False
+    next_cursor = None
     entries = list(await client.lookupRankingInfo(
         rank, index, contain_unexamined, indices
     ))[:1 if search_index else page_size] if indices else []
-    # Detail RPC order is unspecified, including among ties. Keep snapshot order.
+    # Detail RPC order is unspecified, including among ties. Keep index order.
     entry_map = {entry.bvid: entry for entry in entries}
     entries = [entry_map[item.bvid] for item in indices if item.bvid in entry_map]
+    if entries and not search_index:
+        last_rank = entries[-1].rank
+        consumed = sum(entry.rank == last_rank for entry in entries)
+        next_offset = consumed + (cursor_offset if last_rank == cursor_rank else 0)
+        next_cursor = {"rank": last_rank, "offset": next_offset}
+        has_next = len(raw) > cursor_offset + page_size
     meta_infos = await client.lookupMetaInfo(indices) if entries else []
 
     normal_count = len(entries)
@@ -664,7 +604,7 @@ async def get_ranking_preview_async(
         )
 
     return {
-        # Summary count includes rank-zero specials; pagination counts indexed rows only.
+        # Summary count may include rank-zero specials; next-page state uses the cursor.
         "stat": {
             "count": stat.count,
             "totalView": stat.totalView,
@@ -680,6 +620,8 @@ async def get_ranking_preview_async(
         "page_size": page_size,
         "total": total,
         "search_id": video_id,
+        "has_next": has_next,
+        "next_cursor": next_cursor,
     }
 
 
@@ -701,8 +643,15 @@ def get_ranking_preview():
             page_size = int(request.args.get("page_size", 20))
         except (TypeError, ValueError):
             return jsonify(success=False, error="page and page_size must be integers"), 400
-        if page < 1 or not 1 <= page_size <= 110:
-            return jsonify(success=False, error="page must be >= 1 and page_size must be between 1 and 110"), 400
+        if page < 1 or not 1 <= page_size <= 120:
+            return jsonify(success=False, error="page must be >= 1 and page_size must be between 1 and 120"), 400
+        try:
+            cursor_rank = int(request.args.get("cursor_rank", (page - 1) * page_size + 1))
+            cursor_offset = int(request.args.get("cursor_offset", 0))
+            if not 1 <= cursor_rank <= 2147483646 or not 0 <= cursor_offset <= 200000:
+                raise ValueError()
+        except ValueError:
+            return jsonify(success=False, error="无效的翻页位置"), 400
         video_id = request.args.get("video_id", "").strip()
         try:
             if rank_name not in {"domestic", "sv", "utau"} or not 1 <= index <= 2147483647:
@@ -727,6 +676,8 @@ def get_ranking_preview():
                     show_special,
                     include_special,
                     video_id,
+                    cursor_rank,
+                    cursor_offset,
                 )
             )
         )
