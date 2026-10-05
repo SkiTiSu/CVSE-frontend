@@ -26,8 +26,8 @@ before(async () => {
     browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) });
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
-async function pageFor(t, { delay = {}, width = 1400, previewTotal = entries.length } = {}) {
-    const context = await browser.newContext({ viewport: { width, height: 1000 } });
+async function pageFor(t, { delay = {}, width = 1400, previewTotal = entries.length, colorScheme = "light" } = {}) {
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme });
     t.after(() => context.close());
     const page = await context.newPage();
     const requests = [], errors = [];
@@ -238,4 +238,39 @@ test('both preview pagers stay synchronized and mobile expanded filter fits view
     assert.equal(await page.locator('#previewPageInput').inputValue(), '100');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({path:'/tmp/cvse-preview-mobile.png', fullPage:true});
+});
+
+
+test('theme follows system by default, switches without RPC, and persists manual choice',async t=>{
+ const {page,requests}=await pageFor(t,{colorScheme:'dark'});
+ assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
+ assert.equal(await page.locator('#themeSelect').inputValue(),'system');
+ assert.equal(await page.locator('body').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(13, 20, 34)');
+ const before=requests.length;
+ await page.emulateMedia({colorScheme:'light'});
+ await page.waitForFunction(()=>document.documentElement.dataset.theme==='light');
+ await page.locator('#themeSelect').selectOption('dark');
+ assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');assert.equal(requests.length,before);
+ await page.reload();await page.waitForSelector('.video-item');
+ assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');assert.equal(await page.locator('#themeSelect').inputValue(),'dark');
+ await open(page);
+ assert.equal(await page.locator('#editPanel').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(23, 33, 50)');
+ await page.screenshot({path:'/tmp/cvse-dark-editor.png',fullPage:true,animations:'disabled'});
+ await page.keyboard.press('Escape');
+ await page.locator('#settingsBtn').click();
+ assert.equal(await page.locator('#settingsModal').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(23, 33, 50)');
+ await page.locator('#settingsModalClose').click();
+ await page.locator('#themeSelect').selectOption('system');
+ assert.equal(await page.locator('html').getAttribute('data-theme'),'light');
+ await page.emulateMedia({colorScheme:'dark'});await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark');
+ await page.screenshot({path:'/tmp/cvse-dark-recording.png',fullPage:true});
+});
+
+test('dark preview and mobile controls remain readable and fit viewport',async t=>{
+ const {page}=await pageFor(t,{width:390,colorScheme:'dark'});
+ await page.locator('#themeSelect').scrollIntoViewIfNeeded();
+ assert.equal(await page.locator('#themeSelect').isVisible(),true);
+ await page.locator('[data-page="preview"]').click();await page.locator('#getPreviewBtn').click();await page.waitForSelector('.ranking-row');
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.screenshot({path:'/tmp/cvse-dark-mobile.png',fullPage:true});
 });

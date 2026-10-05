@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CVSE 收录管理系统</title>
+    <script src="/static/js/theme.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="/static/css/style.css" rel="stylesheet">
 </head>
@@ -20,6 +21,11 @@
                 <button class="nav-btn" data-page="pika">🔍 皮卡挑选</button>
                 <button class="nav-btn" data-page="debug">🔧 API调试</button>
                 <button class="nav-btn" id="settingsBtn">⚙️ 设置</button>
+                <select class="select theme-select" id="themeSelect" aria-label="外观模式" title="外观模式（自动保存）">
+                    <option value="system">◐ 跟随系统</option>
+                    <option value="light">☀ 浅色模式</option>
+                    <option value="dark">☾ 深色模式</option>
+                </select>
             </nav>
         </div>
     </header>

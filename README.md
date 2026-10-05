@@ -163,3 +163,13 @@ The public entrypoint supports `CVSE_PUBLIC_PORT` (default 25125) to avoid repla
 an existing local service, e.g. `CVSE_PUBLIC_PORT=25126 .venv/bin/python public_server.py`.
 Point the requested `cloudflared tunnel --no-autoupdate --url http://127.0.0.1:25126`
 at that port. Both processes and this computer must remain running.
+
+
+## Appearance
+
+The header appearance selector supports system, light and dark modes. System is
+selected by default and responds immediately to OS appearance changes. Manual
+preferences are saved locally and synchronized across tabs; theme switching
+never requests backend data. The theme initializer runs before the stylesheet
+paints to avoid a light flash when restoring dark mode. If browser storage is
+unavailable, switching still works for the current tab.

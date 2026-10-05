@@ -261,3 +261,33 @@ test('special rows and truncation notice appear only on first page without fetch
  app.previewPage=1;app.renderPreview();assert.equal(doc.querySelectorAll('.ranking-row').length,3);assert.match(doc.querySelector('#rankingPreview').textContent,/超过显示上限/);
  assert.equal(requests.length,before);
 });
+
+function themeSetup(t, { saved = null, dark = false, blockedStorage = false } = {}) {
+ const dom=new JSDOM('<!doctype html><select id="themeSelect"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>',{url:'http://localhost',runScripts:'dangerously'});
+ const w=dom.window,media=new w.EventTarget();media.matches=dark;w.matchMedia=()=>media;
+ if(saved!==null)w.localStorage.setItem('cvse_theme',saved);
+ if(blockedStorage)Object.defineProperty(w,'localStorage',{get(){throw new Error('Storage blocked');}});
+ w.eval(fs.readFileSync(path.join(root,'static/js/theme.js'),'utf8'));
+ w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
+ t.after(()=>w.close());
+ return {w,media,select(mode){const el=w.document.querySelector('#themeSelect');el.value=mode;el.dispatchEvent(new w.Event('change',{bubbles:true}));},theme:()=>w.document.documentElement.dataset.theme};
+}
+
+test('theme defaults to system, tracks changes, and manual override persists',t=>{
+ const {w,media,select,theme}=themeSetup(t,{dark:true});
+ assert.equal(theme(),'dark');assert.equal(w.document.querySelector('#themeSelect').value,'system');
+ media.matches=false;media.dispatchEvent(new w.Event('change'));assert.equal(theme(),'light');
+ select('dark');assert.equal(theme(),'dark');assert.equal(w.localStorage.getItem('cvse_theme'),'dark');
+ media.dispatchEvent(new w.Event('change'));assert.equal(theme(),'dark');
+ select('system');assert.equal(theme(),'light');media.matches=true;media.dispatchEvent(new w.Event('change'));assert.equal(theme(),'dark');
+});
+
+test('theme restores preference, handles other tabs and invalid settings',t=>{
+ const {w,theme}=themeSetup(t,{saved:'light',dark:true});assert.equal(theme(),'light');
+ w.dispatchEvent(new w.StorageEvent('storage',{key:'cvse_theme',newValue:'dark'}));assert.equal(theme(),'dark');assert.equal(w.document.querySelector('#themeSelect').value,'dark');
+ w.dispatchEvent(new w.StorageEvent('storage',{key:'cvse_theme',newValue:'invalid'}));assert.equal(theme(),'dark');assert.equal(w.document.querySelector('#themeSelect').value,'system');
+});
+
+test('theme works when persistent storage is blocked',t=>{
+ const {theme,select}=themeSetup(t,{dark:true,blockedStorage:true});assert.equal(theme(),'dark');select('light');assert.equal(theme(),'light');
+});
