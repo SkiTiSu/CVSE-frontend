@@ -4,6 +4,7 @@ No shared credentials, file fallback, or environment token is used. The browser
 must send its own X-Auth-Key for each mutation; the RPC service validates it.
 """
 import asyncio
+import os
 import socket
 import threading
 from functools import wraps
@@ -118,5 +119,6 @@ def cannot_validate_write_key():
 app.view_functions['validate_auth'] = cannot_validate_write_key
 
 if __name__ == '__main__':
-    print('Starting explicit-key CVSE instance on http://127.0.0.1:25125', flush=True)
-    serve(app, host='127.0.0.1', port=25125, threads=4)
+    port = int(os.environ.get('CVSE_PUBLIC_PORT', '25125'))
+    print(f'Starting explicit-key CVSE instance on http://127.0.0.1:{port}', flush=True)
+    serve(app, host='127.0.0.1', port=port, threads=4)

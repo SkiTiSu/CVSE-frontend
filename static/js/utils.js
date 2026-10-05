@@ -49,5 +49,21 @@ export function getEmptyStats() {
         republish: 0,
         uncheck: 0,
         exclusion: 0,
+        other: 0,
     };
+}
+
+export function parseVideoId(value, { exact = false } = {}) {
+    const text = value.trim();
+    if (!text) return { bvid: '', avid: '', value: '' };
+    if (/^(?:av)?[1-9]\d{0,15}$/i.test(text)) {
+        const digits = text.replace(/^av/i, '');
+        if (BigInt(digits) >= 2n ** 51n) throw new Error('AV号超出有效范围');
+        return { bvid: '', avid: digits, value: `av${digits}` };
+    }
+    if (/^bv/i.test(text) && (exact ? /^BV1[1-9A-HJ-NP-Za-km-z]{9}$/ : /^BV[1-9A-HJ-NP-Za-km-z]+$/).test(`BV${text.slice(2)}`)) {
+        const bvid = `BV${text.slice(2)}`;
+        return { bvid, avid: '', value: bvid };
+    }
+    throw new Error(exact ? '请输入完整的 BV号或 AV号，也可输入数字 AV号。' : '请输入 BV号、AV号或数字 AV号。');
 }

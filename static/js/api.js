@@ -31,10 +31,20 @@ export async function validateAuthKey(authKey) {
     return parseJsonResponse(response, '验证失败');
 }
 
-export async function getVideos(params) {
+const pendingVideoRequests = new Map();
+export function getVideos(params) {
     const query = new URLSearchParams(params);
-    const response = await fetch(`/api/videos?${query.toString()}`, { headers: getAuthHeaders() });
-    return parseJsonResponse(response, '加载失败');
+    const headers = getAuthHeaders();
+    const key = JSON.stringify([query.toString(), headers]);
+    if (pendingVideoRequests.has(key)) return pendingVideoRequests.get(key);
+    const promise = (async () => {
+        try {
+            const response = await fetch(`/api/videos?${query.toString()}`, { headers });
+            return await parseJsonResponse(response, '加载失败');
+        } finally { pendingVideoRequests.delete(key); }
+    })();
+    pendingVideoRequests.set(key, promise);
+    return promise;
 }
 
 export async function getVideo(bvid) {
@@ -53,7 +63,9 @@ export async function submitChanges(changes) {
         },
         body: JSON.stringify({ changes })
     });
-    return parseJsonResponse(response, '提交失败');
+    const result = await parseJsonResponse(response, '提交失败');
+    previewSpecialCache.clear();
+    return result;
 }
 
 export async function calculateRankings({ rank, index, containUnexamined = true, lock = false }) {
@@ -85,14 +97,15 @@ export function cancelRankingPreview() {
     }
 }
 
-export function getRankingPreview({ rank, index, page, pageSize }) {
+export function getRankingPreview({ rank, index, page, pageSize, videoId = '' }) {
     const query = new URLSearchParams({ rank, index, page, page_size: pageSize });
+    if (videoId) query.set('video_id', videoId);
     const key = query.toString();
     if (pendingPreview?.key === key) return pendingPreview.promise;
     cancelRankingPreview();
     const specialKey = JSON.stringify([rank, index]);
     const cachedSpecial = previewSpecialCache.get(specialKey);
-    if (!cachedSpecial) query.set('include_special', 'true');
+    if (!cachedSpecial && !videoId) query.set('include_special', 'true');
     const controller = new AbortController();
     const current = { key, controller, promise: null };
     pendingPreview = current;
@@ -104,7 +117,7 @@ export function getRankingPreview({ rank, index, page, pageSize }) {
                 headers: getAuthHeaders(), signal: controller.signal
             });
             const result = await parseJsonResponse(response, '获取预览失败');
-            if (!controller.signal.aborted && result?.data) {
+            if (!controller.signal.aborted && result?.data && !videoId) {
                 const special = cachedSpecial || { entries: result.data.special_entries || [], truncated: result.data.special_truncated || false };
                 if (!cachedSpecial) {
                     if (previewSpecialCache.size >= 8) previewSpecialCache.delete(previewSpecialCache.keys().next().value);

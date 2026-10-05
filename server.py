@@ -9,6 +9,12 @@ Copyright (c) 2026 milkboy, yhtq
 import asyncio
 import logging
 import os
+import re
+import hashlib
+import threading
+import time
+from collections import OrderedDict
+from concurrent.futures import Future
 from datetime import date, datetime, timedelta
 
 import aiohttp
@@ -28,6 +34,7 @@ from rpc_tools.api_client import (
     Rank,
     RPCTime,
     bv_to_index,
+    av_to_index,
     capnp_to_Rank,
 )
 
@@ -42,6 +49,71 @@ limiter = Limiter(
 
 CVSE_HOST = "47.104.91.74"
 CVSE_PORT = "8663"
+
+# Only detached ID strings are shared across requests/event loops, never RPC readers.
+PREVIEW_INDEX_TTL = 300
+PREVIEW_INDEX_LIMIT = 200_000
+_preview_indices = OrderedDict()
+_preview_index_pending = {}
+_preview_index_lock = threading.Lock()
+_preview_index_epoch = 0
+
+
+def invalidate_preview_indices():
+    global _preview_index_epoch
+    with _preview_index_lock:
+        _preview_index_epoch += 1
+        _preview_indices.clear()
+
+
+async def get_preview_indices(client, rank, index, contain_unexamined, auth_key, stat):
+    """Reuse the upstream rank-ordered ID snapshot; ties occupy separate row slots."""
+    signature = tuple(getattr(stat, field) for field in
+                      ("count", "totalView", "totalLike", "totalCoin", "totalFavorite", "totalNew"))
+    identity = (rank.name, index, contain_unexamined,
+                hashlib.sha256((auth_key or "").encode()).digest())
+    with _preview_index_lock:
+        key = (_preview_index_epoch, identity, signature)
+        cached = _preview_indices.get(identity)
+        if cached and cached[0] == signature and cached[1] > time.monotonic():
+            _preview_indices.move_to_end(identity)
+            return cached[2]
+        pending = _preview_index_pending.get(key)
+        owner = pending is None
+        if owner:
+            pending = Future()
+            _preview_index_pending[key] = pending
+    if not owner:
+        return await asyncio.shield(asyncio.wrap_future(pending))
+    try:
+        raw = await client.getAllRankingInfo(
+            rank, index, contain_unexamined, 1, min(int(stat.count) + 1, 2147483647)
+        ) if stat.count else []
+        # RPC cannot limit its index response. Bound retained memory and never truncate silently.
+        if len(raw) > PREVIEW_INDEX_LIMIT:
+            raise ValueError("榜单索引超过当前预览容量，请联系维护者调整；未截断稿件。")
+        seen = set()
+        detached = []
+        for item in raw:
+            if item.bvid not in seen:
+                seen.add(item.bvid)
+                detached.append((str(item.avid), str(item.bvid)))
+        snapshot = tuple(detached)
+        with _preview_index_lock:
+            if key[0] == _preview_index_epoch:
+                _preview_indices.pop(identity, None)
+                while _preview_indices and (len(_preview_indices) >= 8 or
+                        sum(len(entry[2]) for entry in _preview_indices.values()) + len(snapshot) > PREVIEW_INDEX_LIMIT):
+                    _preview_indices.popitem(last=False)
+                _preview_indices[identity] = (signature, time.monotonic() + PREVIEW_INDEX_TTL, snapshot)
+            pending.set_result(snapshot)
+        return snapshot
+    except BaseException as error:
+        pending.set_exception(error)
+        raise
+    finally:
+        with _preview_index_lock:
+            _preview_index_pending.pop(key, None)
 
 
 def format_video_entry(entry):
@@ -110,7 +182,7 @@ async def get_videos_async(
 
     client = await CVSE_Client.create(CVSE_HOST, CVSE_PORT, auth_key)
 
-    get_unexamined = examined in {"unexamined", "", "false", "no"}
+    get_unexamined = examined in {"unexamined", "", "false", "no", "other"}
     get_unincluded = True
 
     indices = await client.getAll(
@@ -132,6 +204,7 @@ async def get_videos_async(
                 "republish": 0,
                 "uncheck": 0,
                 "exclusion": 0,
+                "other": 0,
             },
             "date_range": {
                 "date": start_week.strftime("%Y年%m月%d日"),
@@ -160,11 +233,13 @@ async def get_videos_async(
     if avid:
         filtered = [v for v in filtered if avid.lower() in v["avid"].lower()]
 
-    if rank_filter != "all":
+    if rank_filter and rank_filter != "all":
         if rank_filter == "unrecorded":
             filtered = [v for v in filtered if len(v["ranks"]) == 0]
         else:
-            filtered = [v for v in filtered if rank_filter in v["ranks"]]
+            selected_ranks = set(rank_filter.split(","))
+            filtered = [v for v in filtered if selected_ranks.intersection(v["ranks"])
+                        or ("other" in selected_ranks and not v["is_examined"] and not v["ranks"])]
 
     if examined in {"yes", "true"}:
         filtered = [v for v in filtered if v["is_examined"] and len(v["ranks"]) > 0]
@@ -172,6 +247,8 @@ async def get_videos_async(
         filtered = [v for v in filtered if not v["is_examined"]]
     elif examined == "exclusion":
         filtered = [v for v in filtered if v["is_examined"] and len(v["ranks"]) == 0]
+    elif examined == "other":
+        filtered = [v for v in filtered if not v["is_examined"] and not v["ranks"]]
 
     if is_republish in {"true", "false"}:
         republish = is_republish == "true"
@@ -190,6 +267,7 @@ async def get_videos_async(
         "republish": len([v for v in filtered if v["is_republish"]]),
         "uncheck": len([v for v in filtered if not v["is_examined"]]),
         "exclusion": len([v for v in filtered if v["is_examined"] and len(v["ranks"]) == 0]),
+        "other": sum(not v["is_examined"] and not v["ranks"] for v in filtered),
     }
 
     return {
@@ -257,7 +335,11 @@ async def reCalculate_rankings_async(
     """recalculate rankings"""
     rank = Rank[rank_name.upper()]
     client = await CVSE_Client.create(CVSE_HOST, CVSE_PORT, auth_key)
-    await client.reCalculateRankings(rank, index, contain_unexamined, lock)
+    invalidate_preview_indices()
+    try:
+        await client.reCalculateRankings(rank, index, contain_unexamined, lock)
+    finally:
+        invalidate_preview_indices()
     return f"Recalculated rankings for {rank_name}"
 
 
@@ -450,6 +532,19 @@ def calculate_rankings():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+def parse_video_index(value):
+    """Validate a complete ID before any RPC; never scan rankings to resolve it."""
+    value = value.strip()
+    if re.fullmatch(r"(?:av)?[1-9][0-9]{0,15}", value, re.IGNORECASE):
+        number = int(re.sub(r"^av", "", value, flags=re.IGNORECASE))
+        if number >= 1 << 51:
+            raise ValueError("AV号超出有效范围")
+        return av_to_index(f"av{number}")
+    if value[:2].lower() == "bv" and re.fullmatch(r"BV1[1-9A-HJ-NP-Za-km-z]{9}", "BV" + value[2:]):
+        return bv_to_index("BV" + value[2:])
+    raise ValueError("请输入完整的 BV号或 AV号（也可输入纯数字 AV号）")
+
+
 async def get_ranking_preview_async(
     rank_name: str,
     index: int,
@@ -459,10 +554,12 @@ async def get_ranking_preview_async(
     page_size: int = 20,
     show_special: bool = False,
     include_special: bool = False,
+    video_id: str = "",
 ):
-    """Read only one bounded upstream rank interval; display filtering is local."""
-    if page < 1 or not 1 <= page_size <= 100:
-        raise ValueError("page must be >= 1 and page_size must be between 1 and 100")
+    """Page by cached ordered IDs, fetching details only for the requested rows."""
+    if page < 1 or not 1 <= page_size <= 110:
+        raise ValueError("page must be >= 1 and page_size must be between 1 and 110")
+    search_index = parse_video_index(video_id) if video_id else None
     client = await CVSE_Client.create(CVSE_HOST, CVSE_PORT, auth_key)
     rank = Rank[rank_name.upper()]
     empty_result = {
@@ -478,31 +575,37 @@ async def get_ranking_preview_async(
         "page": page,
         "page_size": page_size,
         "total": 0,
+        "search_id": video_id,
     }
     # A failed RPC is not an empty ranking. Propagate it to the API error handler.
     stat = await client.lookupRankingMetaInfo(rank, index, contain_unexamined)
 
-    if stat.count == 0 and not include_special:
+    if stat.count == 0 and not include_special and not search_index:
         return empty_result
 
-    # Normal pages retain their bounded rank interval; never scan the whole ranking.
-    from_rank = (page - 1) * page_size + 1
-    to_rank = min(from_rank + page_size, stat.count + 1)
+    # Rank is not an offset: competition ties leave gaps (989 x54 -> 1043).
+    # The RPC returns rank-ordered indexes; reuse their row positions across pages.
+    start = (page - 1) * page_size
     indices = []
-    if from_rank < to_rank:
-        page_indices = await client.getAllRankingInfo(
-            rank, index, contain_unexamined, from_rank, to_rank
-        )
-        indices = [page_indices[i] for i in range(min(len(page_indices), page_size))]
+    total = stat.count
+    if search_index:
+        indices = [Index_to_capnp(search_index)]
+    else:
+        snapshot = await get_preview_indices(client, rank, index, contain_unexamined, auth_key, stat)
+        total = len(snapshot)
+        indices = [Index_to_capnp({"avid": avid, "bvid": bvid})
+                   for avid, bvid in snapshot[start:start + page_size]]
     entries = list(await client.lookupRankingInfo(
         rank, index, contain_unexamined, indices
-    ))[:page_size] if indices else []
-    entries.sort(key=lambda entry: entry.rank)
+    ))[:1 if search_index else page_size] if indices else []
+    # Detail RPC order is unspecified, including among ties. Keep snapshot order.
+    entry_map = {entry.bvid: entry for entry in entries}
+    entries = [entry_map[item.bvid] for item in indices if item.bvid in entry_map]
     meta_infos = await client.lookupMetaInfo(indices) if entries else []
 
     normal_count = len(entries)
     special_truncated = False
-    if include_special:
+    if include_special and not search_index:
         # The schema specifies [from_rank, to_rank), so [0, 1) is rank zero only.
         # It has no upstream limit field; bound subsequent detail/metadata work.
         zero_indices = await client.getAllRankingInfo(rank, index, contain_unexamined, 0, 1)
@@ -528,6 +631,9 @@ async def get_ranking_preview_async(
             "uploader": meta_info.uploader,
             "cover": meta_info.cover,
             "desc": meta_info.desc,
+            "duration": meta_info.duration,
+            "ranks": format_video_entry(meta_info)["ranks"],
+            "is_examined": meta_info.isExamined,
         }
     formatted_entries = []
     for entry in entries:
@@ -540,6 +646,9 @@ async def get_ranking_preview_async(
                 "title": video_info.get("title", ""),
                 "uploader": video_info.get("uploader", ""),
                 "cover": video_info.get("cover", ""),
+                "duration": video_info.get("duration"),
+                "ranks": video_info.get("ranks", []),
+                "is_examined": video_info.get("is_examined", False),
                 "view": entry.view,
                 "like": entry.like,
                 "coin": entry.coin,
@@ -555,7 +664,7 @@ async def get_ranking_preview_async(
         )
 
     return {
-        # Counts describe the original upstream ranking, not locally visible rows.
+        # Summary count includes rank-zero specials; pagination counts indexed rows only.
         "stat": {
             "count": stat.count,
             "totalView": stat.totalView,
@@ -569,7 +678,8 @@ async def get_ranking_preview_async(
         "special_truncated": special_truncated,
         "page": page,
         "page_size": page_size,
-        "total": stat.count,
+        "total": total,
+        "search_id": video_id,
     }
 
 
@@ -579,7 +689,10 @@ def get_ranking_preview():
     """API: Get ranking preview data with pagination"""
     try:
         rank_name = request.args.get("rank", "domestic")
-        index = int(request.args.get("index", 0))
+        try:
+            index = int(request.args.get("index", 1))
+        except ValueError:
+            return jsonify(success=False, error="期数必须为正整数"), 400
         contain_unexamined = (
             request.args.get("contain_unexamined", "true").lower() == "true"
         )
@@ -588,8 +701,16 @@ def get_ranking_preview():
             page_size = int(request.args.get("page_size", 20))
         except (TypeError, ValueError):
             return jsonify(success=False, error="page and page_size must be integers"), 400
-        if page < 1 or not 1 <= page_size <= 100:
-            return jsonify(success=False, error="page must be >= 1 and page_size must be between 1 and 100"), 400
+        if page < 1 or not 1 <= page_size <= 110:
+            return jsonify(success=False, error="page must be >= 1 and page_size must be between 1 and 110"), 400
+        video_id = request.args.get("video_id", "").strip()
+        try:
+            if rank_name not in {"domestic", "sv", "utau"} or not 1 <= index <= 2147483647:
+                raise ValueError("请选择有效的期刊和期数")
+            if video_id:
+                parse_video_index(video_id)
+        except ValueError as error:
+            return jsonify(success=False, error=str(error)), 400
         show_special = request.args.get("show_special", "false").lower() == "true"
         include_special = request.args.get("include_special", "false").lower() == "true"
         auth_key = get_auth_key_from_request()
@@ -605,12 +726,18 @@ def get_ranking_preview():
                     page_size,
                     show_special,
                     include_special,
+                    video_id,
                 )
             )
         )
 
         return jsonify({"success": True, "data": result})
     except Exception as e:
+        # This explicit upstream response means there is no cached ranking.
+        # Keep it distinct from an empty calculated ranking and connectivity failures.
+        if "No ranking meta info found" in str(e):
+            return jsonify(success=False, code="ranking_unavailable",
+                           error="该期暂无可读取的已计算榜单，请核对期刊和期数，或稍后再来查看。"), 404
         return jsonify({"success": False, "error": str(e)}), 500
 
 

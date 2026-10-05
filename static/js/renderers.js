@@ -170,9 +170,10 @@ export function createPreviewContent({ data, previewRank, previewIndex }) {
         return `
             <div class="ranking-card">
                 <div class="ranking-header">
-                    <div class="ranking-rank">⚠️</div>
+                    <div class="ranking-rank">📭</div>
                 </div>
-                <div>${escapeHtml(String(previewRank).toUpperCase())} 第${escapeHtml(previewIndex)}期排行榜当前筛选下暂无视频数据</div>
+                <div>${data?.search_id ? `当前期刊第 ${escapeHtml(previewIndex)} 期中未找到 ${escapeHtml(data.search_id)}` : `${escapeHtml(String(previewRank).toUpperCase())} 第${escapeHtml(previewIndex)}期排行榜当前筛选下暂无视频数据`}</div>
+                <p class="preview-hint">${data?.search_id ? '请确认编号、期刊和期数；该稿件也可能尚未进入本期已计算的榜单。' : data?.total > 0 ? '本页可能没有可显示的稿件，可尝试其他页或勾选“显示 HOT / SH”。' : '可以检查期刊和期数，或稍后再来查看。'}</p>
             </div>
         `;
     }
@@ -201,12 +202,13 @@ export function createPreviewCard(entry) {
     const bvidArg = jsArg(bvid);
     const specialRank = String(entry.special_rank ?? entry.specialRank ?? 'normal').toLowerCase();
     const rank = ['hot', 'sh'].includes(specialRank) ? specialRank.toUpperCase() : `#${entry.rank}`;
+    const excluded = entry.is_examined && (entry.ranks || []).length === 0;
     const metrics = [
         ['view', '播放'], ['like', '点赞'], ['share', '分享'], ['coin', '硬币'],
         ['favorite', '收藏'], ['reply', '评论'], ['danmaku', '弹幕'],
     ];
     return `
-        <article class="ranking-card ranking-row" data-bvid="${escapeHtml(bvid)}">
+        <article class="ranking-card ranking-row ${excluded ? 'ranking-excluded' : ''}" data-bvid="${escapeHtml(bvid)}">
             <div class="ranking-position">
                 <div class="ranking-rank">${escapeHtml(rank)}</div>
                 <div class="ranking-score">分数: ${Number(entry.totalScore || 0).toFixed(1)}</div>
@@ -219,7 +221,9 @@ export function createPreviewCard(entry) {
             </a>
             <div class="ranking-details">
                 <a class="ranking-title" href="https://www.bilibili.com/video/${escapeHtml(bvid)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.title || bvid)}</a>
-                <div class="ranking-uploader">UP主: ${escapeHtml(entry.uploader || '未知')}</div>
+                <div class="ranking-uploader">UP主: ${escapeHtml(entry.uploader || '未知')} <span class="ranking-duration">时长 ${entry.duration == null ? '未知' : formatDuration(entry.duration)}</span></div>
+                ${excluded ? `<span class="tag tag-exclusion">${entry.pending ? '已排除 · 待提交' : '已排除'}</span>` : entry.pending ? '<span class="tag tag-uncheck">已修改 · 待提交</span>' : ''}
+                ${excluded ? '<div class="preview-hint">本次排除不会自动重算榜单，原排名暂时保留。</div>' : ''}
                 <div class="ranking-metrics">
                     ${metrics.map(([key, label]) => `<span class="ranking-metric"><span>${label}</span><strong>${Number(entry[key] || 0).toLocaleString()}</strong></span>`).join('')}
                 </div>
@@ -231,4 +235,14 @@ export function createPreviewCard(entry) {
             </div>
         </article>
     `;
+}
+
+export function createPreviewError(error) {
+    const detail = String(error?.message || '未知错误');
+    let message = '暂时无法读取预览，请检查期刊、期数，或稍后手动重试。';
+    if (/timeout|超时/i.test(detail)) message = '预览读取超时，请稍后手动重试。';
+    else if (/503|busy/i.test(detail)) message = '服务器正在处理其他请求，请稍后再试。';
+    else if (/No ranking meta|No cached calculation/i.test(detail)) message = '暂时无法取得该期榜单，可能尚未计算。请核对期刊和期数。';
+    else if (/该期暂无可读取/.test(detail)) message = '该期暂无可读取的已计算榜单，请核对期刊和期数，或稍后再来查看。';
+    return `<div class="empty-state" role="status"><div class="empty-state-icon">📭</div><p>${message}</p><details class="preview-error-detail"><summary>查看错误详情</summary><pre>${escapeHtml(detail)}</pre></details></div>`;
 }

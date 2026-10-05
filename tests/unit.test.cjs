@@ -161,7 +161,8 @@ test('rank-zero HOT/SH uses special_rank and is cached across toggles and pages'
  changeCheckbox(w,'#previewShowSpecial',true);assert.equal(calls.length,1);assert.equal(doc.querySelectorAll('.ranking-row').length,3);assert.match(doc.querySelector('#rankingPreview').textContent,/HOT/);assert.match(doc.querySelector('#rankingPreview').textContent,/SH/);
  changeCheckbox(w,'#previewShowSpecial',false);assert.equal(calls.length,1);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
  app.previewChangePage(1);await new Promise(r=>setTimeout(r,0));assert.equal(calls.length,2);assert.ok(!calls[1].includes('include_special'));
- changeCheckbox(w,'#previewShowSpecial',true);assert.equal(calls.length,2);assert.equal(doc.querySelectorAll('.ranking-row').length,3);
+ changeCheckbox(w,'#previewShowSpecial',true);assert.equal(calls.length,2);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
+ await app.previewGoPage(1);assert.equal(calls.length,3);assert.ok(!calls[2].includes('include_special'));assert.equal(doc.querySelectorAll('.ranking-row').length,3);
 });
 
 test('recording exposes red batch exclusion; preview keeps neutral single exclusion',async t=>{
@@ -172,4 +173,91 @@ test('recording exposes red batch exclusion; preview keeps neutral single exclus
  app.currentPage='preview';app.openEditPanel('BV1');assert.ok(doc.querySelector('#editPanel button[onclick*="excludeEditingVideo"]').classList.contains('btn-secondary'));
  const card=w.createPreviewCard({...video('BV8'),rank:0,special_rank:'hot'});const box=doc.createElement('div');box.innerHTML=card;assert.ok(box.querySelector('button[onclick*="excludeVideo"]').classList.contains('btn-secondary'));
  assert.ok(!doc.body.textContent.includes('按原始排名区间'));
+});
+
+test('multi-rank OR filtering deduplicates and includes only unexamined unassigned other rows', async t => {
+ const {w,app,doc,requests}=await setup(t);
+ app.videos=[video('BV1',{ranks:['sv','utau']}),video('BV2',{ranks:['utau']}),video('BV3',{ranks:[]}),video('BV4',{ranks:[],is_examined:true})];
+ const before=requests.length;
+ for(const value of ['sv','utau','other']) changeCheckbox(w,`#rankFilter input[value="${value}"]`,true);
+ assert.equal(requests.length,before);assert.match(doc.querySelector('#rankFilterSummary').textContent,/SV类、UTAU类、其他/);
+ assert.deepEqual(clean(app.getVisibleVideos()).map(v=>v.bvid),['BV1','BV2','BV3']);
+ await app.loadVideos({force:true});assert.equal(new URL(requests.at(-1).url,'http://localhost').searchParams.get('rank'),'sv,utau,other');
+});
+
+test('unified ID input sends only the recognized parameter and invalid ID sends nothing', async t => {
+ const {app,doc,requests}=await setup(t);
+ for(const [input,key,value] of [['AV123','avid','123'],['456','avid','456'],['BV1xx411c7mD','bvid','BV1xx411c7mD']]){
+  doc.querySelector('#videoIdFilter').value=input;const before=requests.length;await app.loadVideos({force:true});
+  assert.equal(requests.length,before+1);const q=new URL(requests.at(-1).url,'http://localhost').searchParams;assert.equal(q.get(key),value);assert.equal(q.get(key==='avid'?'bvid':'avid'),'');
+ }
+ doc.querySelector('#videoIdFilter').value='bad value';const before=requests.length;await app.loadVideos({force:true});assert.equal(requests.length,before);
+});
+
+test('preview exact search is one request, skips special scan, and shows matching HOT despite toggle',async t=>{
+ const {w,app,doc,requests}=await setup(t);const calls=[];
+ w.fetch=async url=>{calls.push(url);return {ok:true,json:async()=>({success:true,data:{search_id:'av123',entries:[{...video('BV8'),rank:0,special_rank:'hot',duration:125}],stat:{count:4100},total:4100}})};};
+ doc.querySelector('#previewVideoId').value='AV123';await app.getPreview();assert.equal(calls.length,1);
+ const q=new URL(calls[0],'http://localhost').searchParams;assert.equal(q.get('video_id'),'av123');assert.equal(q.has('include_special'),false);
+ assert.equal(doc.querySelectorAll('.ranking-row').length,1);assert.match(doc.querySelector('.ranking-duration').textContent,/2:05/);assert.equal(doc.querySelector('#previewPaginationTop').style.display,'none');
+ doc.querySelector('#previewVideoId').value='BV1';await app.getPreview();assert.equal(calls.length,1);
+});
+
+test('preview jumps directly once, syncs both bars, rejects invalid and duplicate page jumps',async t=>{
+ const {w,app,doc}=await setup(t);const calls=[];
+ w.fetch=async url=>{calls.push(url);return {ok:true,json:async()=>({success:true,data:{entries:[{...video('BV1'),rank:81}],stat:{count:4100},total:4100}})};};
+ await app.getPreview();await app.previewGoPage(100);assert.equal(calls.length,2);assert.equal(new URL(calls[1],'http://localhost').searchParams.get('page'),'100');assert.equal(app.previewPage,100);
+ for(const suffix of ['', 'Top']){assert.equal(doc.querySelector(`#previewPageInput${suffix}`).value,'100');assert.match(doc.querySelector(`#previewPageInfo${suffix}`).textContent,/第 100 页/);}
+ for(const page of [0,206,1.5,100,NaN]) await app.previewGoPage(page);assert.equal(calls.length,2);
+});
+
+test('preview exclusion and undo update immediately without reloading; submit preserves marker',async t=>{
+ const {app,doc,requests}=await setup(t);
+ app.previewData={entries:[{...video('BV1'),rank:1}],stat:{count:1},total:1};app.previewTotal=1;app.renderPreview();
+ const before=requests.length;await app.excludeVideo('BV1');assert.equal(requests.length,before);assert.match(doc.querySelector('.ranking-row').textContent,/已排除 · 待提交/);
+ app.removeChange('BV1');assert.equal(doc.querySelector('.ranking-excluded'),null);
+ await app.excludeVideo('BV1');await app.submitChanges();assert.ok(doc.querySelector('.ranking-excluded'));assert.ok(!doc.querySelector('.ranking-row').textContent.includes('待提交'));
+});
+
+test('preview empty and failure states are distinct and error detail is escaped',async t=>{
+ const {w}=await setup(t);
+ assert.match(w.createPreviewContent({data:{entries:[],search_id:'av123'},previewRank:'sv',previewIndex:3}),/未找到 av123/);
+ const html=w.createPreviewError(new Error('HTTP 500 <img src=x onerror=alert(1)>'));
+ assert.match(html,/暂时无法读取/);assert.ok(!html.includes('<img'));assert.ok(!html.includes('暂无视频数据'));
+});
+
+test('70 and 110 page sizes reach API once and preserve bounded parameter',async t=>{
+ const {app,doc,requests}=await setup(t);
+ for(const size of ['70','110']){doc.querySelector('#previewPageSize').value=size;const before=requests.length;await app.getPreview();assert.equal(requests.length,before+1);assert.equal(new URL(requests.at(-1).url,'http://localhost').searchParams.get('page_size'),size);}
+});
+
+
+test('clear recording filters resets today and page with one request, preserving layout and pending changes',async t=>{
+ const {w,app,doc,requests}=await setup(t);
+ await app.excludeVideo('BV1');
+ doc.querySelector('#dateFilter').value='2026-01-01';
+ doc.querySelector('#searchKeyword').value='keyword';
+ doc.querySelector('#videoIdFilter').value='av123';
+ doc.querySelector('#examinedFilter').value='true';
+ doc.querySelector('#republishFilter').value='true';
+ changeCheckbox(w,'#rankFilter input[value="sv"]',true);
+ doc.querySelector('#currentPage').value='5';doc.querySelector('#currentPageBottom').value='5';
+ doc.querySelector('#pageSizeSelect').value='100';app.setLayoutMode('single');
+ const before=requests.length;
+ doc.querySelector('#clearRecordingFiltersBtn').click();await new Promise(r=>setTimeout(r,0));
+ assert.equal(requests.length,before+1);
+ const q=new URL(requests.at(-1).url,'http://localhost').searchParams;
+ for(const key of ['keyword','bvid','avid','examined','is_republish']) assert.equal(q.get(key),'');
+ assert.equal(q.get('date'),w.formatLocalDateInput());assert.equal(q.get('rank'),'all');assert.equal(q.get('page'),'1');assert.equal(q.get('page_size'),'100');
+ assert.equal(doc.querySelector('#rankFilterSummary').textContent,'全部期刊');assert.equal(doc.querySelectorAll('#rankFilter input:checked').length,0);
+ assert.equal(doc.querySelector('#currentPageBottom').value,'1');assert.equal(app.layoutMode,'single');assert.equal(app.changes.size,1);
+});
+
+test('special rows and truncation notice appear only on first page without fetching on toggle',async t=>{
+ const {w,app,doc,requests}=await setup(t);
+ app.previewData={entries:[{...video('BV1'),rank:21},{...video('BV2'),rank:22,special_rank:'hot'}],special_entries:[{...video('BV8'),rank:0,special_rank:'sh'}],special_truncated:true,stat:{count:40},total:40};app.previewTotal=40;app.previewPage=2;
+ const before=requests.length;changeCheckbox(w,'#previewShowSpecial',true);
+ assert.equal(doc.querySelectorAll('.ranking-row').length,1);assert.ok(!doc.querySelector('#rankingPreview').textContent.includes('超过显示上限'));
+ app.previewPage=1;app.renderPreview();assert.equal(doc.querySelectorAll('.ranking-row').length,3);assert.match(doc.querySelector('#rankingPreview').textContent,/超过显示上限/);
+ assert.equal(requests.length,before);
 });

@@ -26,7 +26,7 @@ before(async () => {
     browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) });
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
-async function pageFor(t, { delay = {}, width = 1400 } = {}) {
+async function pageFor(t, { delay = {}, width = 1400, previewTotal = entries.length } = {}) {
     const context = await browser.newContext({ viewport: { width, height: 1000 } });
     t.after(() => context.close());
     const page = await context.newPage();
@@ -48,7 +48,7 @@ async function pageFor(t, { delay = {}, width = 1400 } = {}) {
             if (delay[bvid]) await new Promise(resolve => setTimeout(resolve, delay[bvid]));
             data = { success: true, data: video(bvid) };
         } else if (url.pathname === '/api/ranking-preview') {
-            data = { success: true, data: { stat: { count: entries.length }, entries, special_entries: url.searchParams.get('include_special') === 'true' ? specials : [], total: entries.length } };
+            data = { success: true, data: { stat: { count: previewTotal }, entries: url.searchParams.has('video_id') ? entries.slice(0,1) : entries, search_id: url.searchParams.get('video_id') || '', special_entries: url.searchParams.get('include_special') === 'true' ? specials : [], total: previewTotal } };
         } else if (url.pathname === '/api/submit-changes') data = { success: true };
         else return route.abort();
         await route.fulfill({ json: data });
@@ -194,4 +194,48 @@ test('mobile preview fits viewport and actions remain reachable', async t => {
     assert.equal(overflow, false);
     await page.locator('.ranking-row').first().getByText('编辑', { exact: false }).click();
     assert.equal(await page.locator('#editPanel').count(), 1);
+});
+
+test('new filters, logo, large page size, exact search and exclusion work in browser', async t => {
+    const { page, requests } = await pageFor(t);
+    await page.locator('#rankFilter summary').click();
+    await page.locator('#rankFilter input[value="sv"]').check();
+    await page.locator('#rankFilter input[value="utau"]').check();
+    const before = requests.length;
+    await page.locator('#searchBtn').click();
+    await page.waitForFunction(() => !document.querySelector('#videoList .loading'));
+    assert.equal(requests.length, before + 1);
+    assert.equal(requests.at(-1).url.searchParams.get('rank'), 'sv,utau');
+    assert.equal(await page.locator('.logo-icon').evaluate(img => img.complete && img.naturalWidth > 0), true);
+    await page.locator('[data-page="preview"]').click();
+    await page.locator('#previewPageSize').selectOption('110');
+    await page.waitForSelector('.ranking-row');
+    assert.equal(requests.at(-1).url.searchParams.get('page_size'), '110');
+    await page.locator('.ranking-row').first().getByText('收录排除', {exact:true}).click();
+    await page.waitForSelector('.ranking-excluded');
+    assert.match(await page.locator('.ranking-excluded').first().textContent(), /待提交/);
+    await page.locator('#clearChangesBtn').click();
+    assert.equal(await page.locator('.ranking-excluded').count(), 0);
+    await page.locator('#previewVideoId').fill('av123');
+    await page.locator('#previewVideoId').press('Enter');
+    await page.waitForSelector('.ranking-row');
+    assert.equal(requests.at(-1).url.searchParams.get('video_id'), 'av123');
+    assert.equal(requests.at(-1).url.searchParams.has('include_special'), false);
+    await page.screenshot({path:'/tmp/cvse-preview-desktop.png', fullPage:true});
+});
+
+test('both preview pagers stay synchronized and mobile expanded filter fits viewport', async t => {
+    const { page, requests } = await pageFor(t, {width:390,previewTotal:4100});
+    await page.locator('#rankFilter summary').click();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.locator('[data-page="preview"]').click();
+    await page.locator('#getPreviewBtn').click();
+    await page.waitForSelector('.ranking-row');
+    await page.locator('#previewPageInputTop').fill('100');
+    await page.locator('#previewGoPageBtnTop').click();
+    await page.waitForFunction(() => app.previewPage===100);
+    assert.equal(requests.at(-1).url.searchParams.get('page'), '100');
+    assert.equal(await page.locator('#previewPageInput').inputValue(), '100');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({path:'/tmp/cvse-preview-mobile.png', fullPage:true});
 });

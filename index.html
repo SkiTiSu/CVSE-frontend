@@ -11,7 +11,7 @@
     <header class="app-header">
         <div class="header-content">
             <div class="logo">
-                <div class="logo-icon">📋</div>
+                <img class="logo-icon" src="/static/images/cvse-logo.png" alt="CVSE Logo">
                 <h1>CVSE 收录管理系统</h1>
             </div>
             <nav class="header-nav">
@@ -60,6 +60,10 @@
                                 <div class="stat-number" id="uncheckCount">-</div>
                                 <div class="stat-label">待收录</div>
                             </div>
+                            <div class="stat-card other" title="未完成收录且无任何期刊归属；属于待收录的子集。数量随当前查询条件更新。">
+                                <div class="stat-number" id="otherCount">-</div>
+                                <div class="stat-label">其他（无归属）</div>
+                            </div>
                             <div class="stat-card exclusion">
                                 <div class="stat-number" id="exclusionCount">-</div>
                                 <div class="stat-label">排除</div>
@@ -76,12 +80,17 @@
                             </div>
                             <div class="filter-group">
                                 <span class="filter-label">期刊:</span>
-                                <select class="select" id="rankFilter">
-                                    <option value="all">全部</option>
-                                    <option value="domestic">国产类</option>
-                                    <option value="sv">SV类</option>
-                                    <option value="utau">UTAU类</option>
-                                </select>
+                                <details class="rank-multiselect" id="rankFilter">
+                                    <summary id="rankFilterSummary">全部期刊</summary>
+                                    <div class="rank-options">
+                                        <label><input type="checkbox" value="domestic"> 国产类</label>
+                                        <label><input type="checkbox" value="sv"> SV类</label>
+                                        <label><input type="checkbox" value="utau"> UTAU类</label>
+                                        <label><input type="checkbox" value="other"> 其他（未审核且无归属）</label>
+                                        <button type="button" class="btn btn-secondary btn-sm" id="clearRankFilter">清空，显示全部</button>
+                                        <small>可多选，点击搜索后生效</small>
+                                    </div>
+                                </details>
                             </div>
                             <div class="filter-group">
                                 <span class="filter-label">状态:</span>
@@ -101,12 +110,8 @@
                                 </select>
                             </div>
                             <div class="filter-group">
-                                <span class="filter-label">BV号:</span>
-                                <input type="text" class="input" id="bvidFilter" placeholder="BV..." style="width: 130px;">
-                            </div>
-                            <div class="filter-group">
-                                <span class="filter-label">AV号:</span>
-                                <input type="text" class="input" id="avidFilter" placeholder="av..." style="width: 130px;">
+                                <label class="filter-label" for="videoIdFilter">AV / BV:</label>
+                                <input type="text" class="input" id="videoIdFilter" placeholder="BV号 / av号 / 数字AV号" style="width: 210px;">
                             </div>
                             <div class="filter-group">
                                 <span class="filter-label">每页数量</span>
@@ -129,6 +134,7 @@
                             <div class="filter-actions">
                                 <button class="btn btn-primary" id="searchBtn">🔍 搜索</button>
                                 <button class="btn btn-secondary" id="refreshBtn">🔄 刷新</button>
+                                <button class="btn btn-secondary" id="clearRecordingFiltersBtn" title="清空筛选，日期恢复为今天，并返回第一页">清除筛选</button>
                             </div>
                         </div>
                     </div>
@@ -177,12 +183,23 @@
                             <option value="10">10条/页</option>
                             <option value="20" selected>20条/页</option>
                             <option value="50">50条/页</option>
+                            <option value="70">70条/页</option>
                             <option value="100">100条/页</option>
+                            <option value="110">110条/页</option>
                         </select>
                         <label class="checkbox-label"><input type="checkbox" id="previewShowSpecial">显示 HOT / SH</label>
-                        <button class="btn btn-primary" id="getPreviewBtn">👀 预览</button>
+                        <input class="input" id="previewVideoId" aria-label="预览精确搜索AV或BV号" placeholder="完整 AV / BV号（可选）" style="width: 225px;">
+                        <button class="btn btn-primary" id="getPreviewBtn">👀 预览 / 搜索</button>
+                        <button class="btn btn-secondary" id="clearPreviewSearch">清除搜索</button>
                         <button class="btn btn-primary" id="calculateBtn">🧮 计算排行榜</button>
                     </div>
+                </div>
+                <div class="card-page" id="previewPaginationTop" style="justify-content: center; padding: 1rem; display: none;">
+                    <button class="btn btn-secondary" id="previewPrevPageBtnTop">上一页</button>
+                    <span id="previewPageInfoTop" style="margin: 0 1rem; font-size: 0.875rem; color: var(--gray-600); align-self: center;">第 1 页 / 共 1 页</span>
+                    <input class="input preview-page-input" id="previewPageInputTop" type="number" min="1" step="1" aria-label="目标页码">
+                    <button class="btn btn-secondary" id="previewGoPageBtnTop">跳转</button>
+                    <button class="btn btn-secondary" id="previewNextPageBtnTop">下一页</button>
                 </div>
                 <div class="ranking-preview" id="rankingPreview">
                     <div class="empty-state">点击"预览"获取预览数据</div>
@@ -190,6 +207,8 @@
                 <div class="card-page" id="previewPagination" style="justify-content: center; padding: 1rem; display: none;">
                     <button class="btn btn-secondary" id="previewPrevPageBtn">上一页</button>
                     <span id="previewPageInfo" style="margin: 0 1rem; font-size: 0.875rem; color: var(--gray-600); align-self: center;">第 1 页 / 共 1 页</span>
+                    <input class="input preview-page-input" id="previewPageInput" type="number" min="1" step="1" aria-label="目标页码">
+                    <button class="btn btn-secondary" id="previewGoPageBtn">跳转</button>
                     <button class="btn btn-secondary" id="previewNextPageBtn">下一页</button>
                 </div>
             </div>

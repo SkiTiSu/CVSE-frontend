@@ -47,7 +47,7 @@ uv run server.py
 - “收录排除”和“批量排除”使用现有排除状态：`is_examined=true`、`ranks=[]`。保留搬运标记和 Staff 信息，不删除稿件。
 - 排除/拒收只进入本地待提交队列，可移除或清空；只有确认“提交更改”才发送后端。
 - 预览每条稿件使用横向列表，显示播放、点赞、分享、硬币、收藏、评论、弹幕；“新上榜”改为“新投稿”。
-- HOT/SH 默认隐藏，按 special_rank 区分；首次预览附带 rank 0 的 [0,1) 查询，详情/元数据各最多100条，浏览器缓存最多8组榜单/期数。切换显示和翻页不重复特殊查询。普通页仍按原始排名区间有界读取。
+- HOT/SH 默认隐藏，勾选后仅在预览第一页显示（精确编号搜索仍显示命中稿件），按 special_rank 区分；首次预览附带 rank 0 的 [0,1) 查询，详情/元数据各最多100条，浏览器缓存最多8组榜单/期数。切换显示和翻页不重复特殊查询。普通页按缓存的有序稿件索引切片，详情和元数据只读取当前页。
 
 ## Checks (no production service required)
 
@@ -105,11 +105,21 @@ read or configured. The user must enter any key themselves in the browser.
 
 ## Bounded preview recovery
 
-Normal preview pages read only the requested rank interval (page size 1–100).
+Normal preview pages slice a rank-ordered index snapshot by row offset (page size
+1–110). Rank values may repeat and skip numbers; they must never be used as row
+offsets. On a cache miss, one RPC reads all positive-rank AV/BV indexes, without
+reading all ranking details or metadata. The detached ID snapshot is shared for
+five minutes by ranking, issue, review mode and authorization identity. Summary
+changes and local recalculation invalidate it. Concurrent cold reads coalesce.
+An LRU retains at most eight snapshots and 200,000 IDs total; oversized snapshots
+fail explicitly rather than silently dropping rows. Detail and metadata calls
+remain limited to the requested page. RPC detail order is restored to index order,
+including ties. Pagination totals use the snapshot length; the summary still
+shows upstream count (which can also include rank-zero special entries).
 Special rows use a separate [0,1) rank interval on the first uncached preview,
 with at most 100 detail and metadata records. The existing RPC has no index
 limit parameter: the rank-zero index response and upstream generation cannot
-be guaranteed to contain at most 100 records. No full-ranking scan is used.
+be guaranteed to contain at most 100 records. No full-ranking detail scan is used.
 Repeated identical in-flight previews share one fetch. Changed criteria cancel
 the old browser fetch; browser cancellation does not guarantee that remote work
 has stopped. The read timeout remains 15 seconds and the browser deadline is
@@ -120,3 +130,36 @@ Source updates do not reload the running Waitress process. Applying the Python
 changes requires an explicitly authorized service restart; changing these files
 alone must not be treated as a production fix being active. Static JS may be
 served from disk before that restart, so deployment must be coordinated.
+
+
+## Additional review controls (2026-10-05)
+
+- Recording rank filters support OR multi-selection. “其他（未审核且无归属）” means
+  `is_examined=false` and `ranks=[]`, and remains a subset of the unexamined count.
+  Filtering and statistics run before pagination on the existing daily metadata
+  response, without extra upstream calls. Counts follow the current query filters.
+- The combined recording AV/BV input recognizes AV prefixes and numeric AV IDs,
+  retaining the existing selected-date scope. Selecting checkboxes does not fetch;
+  click Search to apply the selection. Identical pending recording requests share
+  one fetch.
+  “清除筛选” resets the date to today, clears keyword/ID/rank/status/republish
+  filters, and fetches page one once; page size, layout and pending edits remain.
+- Preview returns duration and review state from its existing metadata batch.
+  Exclusions are visibly marked, including pending local changes; removing pending
+  changes restores the marker. Submission does not automatically recalculate rankings.
+- Preview has synchronized top/bottom page jump controls and 70/110 row options.
+  Normal pages have a 110-row bound; rank-zero HOT/SH details retain their 100-row
+  bound. Jumping slices the shared ID snapshot and reads only that page’s details,
+  never intervening pages.
+- Preview AV/BV search accepts complete IDs only and calls lookupRankingInfo with
+  one index in the selected ranking and issue. It does not scan rank intervals,
+  fetch special rows, or retry misses. Matching HOT/SH is visible even when hidden
+  in normal browsing. Invalid IDs are rejected before RPC.
+- Missing cached rankings get a friendly 404 response; empty results, timeouts,
+  and other failures remain distinct. No error path automatically recalculates.
+- The header uses the supplied white CVSE logo over the indigo background.
+
+The public entrypoint supports `CVSE_PUBLIC_PORT` (default 25125) to avoid replacing
+an existing local service, e.g. `CVSE_PUBLIC_PORT=25126 .venv/bin/python public_server.py`.
+Point the requested `cloudflared tunnel --no-autoupdate --url http://127.0.0.1:25126`
+at that port. Both processes and this computer must remain running.
