@@ -1370,7 +1370,7 @@ body {
     .card-page > span { grid-column: 1 / -1; grid-row: 1; text-align: center; margin: 0 !important; min-width: 0; }
     .card-page > button, .card-page > input { grid-row: 2; width: 100% !important; min-width: 0; margin: 0; padding-left: .2rem; padding-right: .2rem; }
     .selection-bar { gap: .5rem; }
-    .selection-bar.has-selection { position: static; }
+    .selection-bar.has-selection { top: env(safe-area-inset-top, 0px); }
     .selection-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
     .video-select { gap: .5rem; }
     .video-checkbox { width: 24px; height: 24px; }

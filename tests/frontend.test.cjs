@@ -306,3 +306,25 @@ for (const [width,colorScheme] of [[320,'dark'],[390,'light'],[430,'dark']]) {
   assert.equal((await state(page)).changes[0][1].staff_info,'手机修改');
  });
 }
+
+for (const width of [320, 390]) {
+ test(`mobile batch bar stays visible while scrolling at ${width}px`, async t => {
+  const {page, requests} = await pageFor(t, {width});
+  await page.setViewportSize({width, height: 640});
+  await page.locator('#selectVisibleBtn').click();
+  const before = requests.length;
+  await page.evaluate(() => {
+   const bar = document.querySelector('#selectionBar');
+   window.scrollTo(0, bar.getBoundingClientRect().top + scrollY + 160);
+  });
+  await page.waitForFunction(() => Math.abs(document.querySelector('#selectionBar').getBoundingClientRect().top) < 1);
+  for (const selector of ['#batchMarkExaminedBtn', '#batchRejectBtn']) {
+   const box = await page.locator(selector).boundingBox();
+   assert.ok(box.y >= 0 && box.y + box.height <= 640);
+   assert.ok(box.x >= 0 && box.x + box.width <= width);
+  }
+  await page.locator('#clearSelectionBtn').click();
+  assert.equal(await page.locator('#selectionBar').evaluate(el => el.classList.contains('has-selection')), false);
+  assert.equal(requests.length, before);
+ });
+}
