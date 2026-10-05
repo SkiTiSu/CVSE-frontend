@@ -168,7 +168,7 @@ test('rank-zero HOT/SH uses special_rank and is cached across toggles and pages'
 test('recording exposes red batch exclusion; preview keeps neutral single exclusion',async t=>{
  const {w,app,doc}=await setup(t);
  assert.equal(doc.querySelectorAll('#videoList button[onclick*="excludeVideo"]').length,0);
- assert.equal(doc.querySelector('#batchRejectBtn').textContent,'批量排除');assert.ok(doc.querySelector('#batchRejectBtn').classList.contains('btn-danger'));
+ assert.equal(doc.querySelector('#batchRejectBtn .desktop-label').textContent,'批量排除');assert.ok(doc.querySelector('#batchRejectBtn').classList.contains('btn-danger'));
  app.openEditPanel('BV1');assert.equal(doc.querySelector('#editPanel button[onclick*="excludeEditingVideo"]'),null);app.closeEditPanel();
  app.currentPage='preview';app.openEditPanel('BV1');assert.ok(doc.querySelector('#editPanel button[onclick*="excludeEditingVideo"]').classList.contains('btn-secondary'));
  const card=w.createPreviewCard({...video('BV8'),rank:0,special_rank:'hot'});const box=doc.createElement('div');box.innerHTML=card;assert.ok(box.querySelector('button[onclick*="excludeVideo"]').classList.contains('btn-secondary'));

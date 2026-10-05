@@ -1414,3 +1414,34 @@ body {
     .rank-multiselect summary { justify-content: space-between; }
     .rank-multiselect summary::after { content: '▾'; margin-left: .3rem; }
 }
+
+.mobile-label, .changes-backdrop { display: none; }
+.changes-actions { display: flex; gap: .75rem; }
+.selection-more, .selection-more-menu { display: contents; }
+.selection-more > summary { display: none; }
+@media (max-width: 768px) {
+    .desktop-label { display: none; }
+    .mobile-label { display: inline; }
+    .selection-bar, .selection-bar.has-selection { flex-wrap: nowrap; gap: .25rem; padding: .25rem; }
+    .selection-summary { white-space: nowrap; font-size: .75rem; }
+    .selection-actions { display: flex; width: auto; flex-wrap: nowrap; gap: .25rem; }
+    .selection-actions .btn { padding: .35rem .5rem; white-space: nowrap; }
+    .selection-more { display: block; position: relative; }
+    .selection-more > summary { display: flex; list-style: none; }
+    .selection-more > summary::-webkit-details-marker { display: none; }
+    .selection-more-menu { display: none; }
+    .selection-more[open] .selection-more-menu { display: flex; flex-direction: column; position: absolute; right: 0; top: calc(100% + .3rem); min-width: 130px; padding: .4rem; background: var(--surface); border: 1px solid var(--gray-200); border-radius: var(--radius); box-shadow: var(--shadow-md); z-index: 100; }
+    .changes-panel { max-height: 60dvh; display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+    .changes-header { flex: 0 0 auto; padding: .35rem .6rem max(.35rem, env(safe-area-inset-bottom)); flex-wrap: nowrap; min-height: 56px; gap: .25rem; }
+    .changes-title { font-size: .875rem; white-space: nowrap; gap: .3rem; }
+    .changes-actions { gap: .3rem; }
+    .changes-list, #clearChangesBtn { display: none; }
+    .changes-panel.expanded .changes-list { display: flex; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+    .changes-panel.expanded #clearChangesBtn { display: flex; }
+    .changes-panel.expanded { border-radius: 1rem 1rem 0 0; }
+    .changes-backdrop.open { display: block; position: fixed; inset: 0; background: rgb(0 0 0 / .45); z-index: 149; }
+    body:has(.changes-backdrop.open) { overflow: hidden; }
+    body:has(.edit-panel.open) .selection-bar,
+    body:has(.edit-panel.open) .changes-panel,
+    body:has(.edit-panel.open) .changes-backdrop { visibility: hidden; }
+}

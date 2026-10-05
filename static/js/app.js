@@ -179,7 +179,38 @@ class CVSEApp {
         });
     }
 
+    setChangesExpanded(expanded) {
+        document.getElementById('changesPanel').classList.toggle('expanded', expanded);
+        document.getElementById('changesBackdrop').classList.toggle('open', expanded);
+        const toggle = document.getElementById('toggleChangesBtn');
+        toggle.setAttribute('aria-expanded', String(expanded));
+        toggle.textContent = expanded ? '收起' : '查看';
+        this.syncChangesPanelOffset();
+    }
+
     setupChangesPanel() {
+        document.getElementById('toggleChangesBtn').addEventListener('click', () =>
+            this.setChangesExpanded(!document.getElementById('changesPanel').classList.contains('expanded')));
+        document.getElementById('changesBackdrop').addEventListener('click', () => this.setChangesExpanded(false));
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') this.setChangesExpanded(false);
+        });
+        const more = document.getElementById('selectionMore');
+        const mobileQuery = window.matchMedia?.('(max-width: 768px)');
+        more.open = !mobileQuery?.matches;
+        mobileQuery?.addEventListener('change', event => {
+            more.open = !event.matches;
+            this.setChangesExpanded(false);
+        });
+        more.addEventListener('click', event => { if (mobileQuery?.matches && event.target.closest('button')) more.open = false; });
+        document.addEventListener('click', event => { if (mobileQuery?.matches && !more.contains(event.target)) more.open = false; });
+        let swipeStart = null;
+        const header = document.querySelector('.changes-header');
+        header.addEventListener('touchstart', event => { swipeStart = event.touches[0].clientY; }, {passive: true});
+        header.addEventListener('touchend', event => {
+            if (swipeStart !== null && event.changedTouches[0].clientY - swipeStart > 50) this.setChangesExpanded(false);
+            swipeStart = null;
+        }, {passive: true});
         document.getElementById('clearChangesBtn').addEventListener('click', () => this.clearChanges());
         document.getElementById('submitChangesBtn').addEventListener('click', () => this.showSubmitModal());
         document.getElementById('modalClose').addEventListener('click', () => this.hideModal());
@@ -731,6 +762,7 @@ class CVSEApp {
             panel.classList.add('open');
         } else {
             panel.classList.remove('open');
+            this.setChangesExpanded(false);
         }
 
         list.innerHTML = createChangeItems(Array.from(this.changes.entries()));
@@ -740,7 +772,9 @@ class CVSEApp {
 
     syncChangesPanelOffset() {
         const panel = document.getElementById('changesPanel');
-        const offset = panel.classList.contains('open') ? panel.offsetHeight : 0;
+        const compact = window.matchMedia?.('(max-width: 768px)').matches ?? false;
+        const height = compact ? panel.querySelector('.changes-header').offsetHeight : panel.offsetHeight;
+        const offset = panel.classList.contains('open') ? height : 0;
         const previousOffset = this.changesPanelOffset;
         const distanceFromBottom = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
 

@@ -122,7 +122,7 @@ test('batch rejection stages selected videos only, keeps metadata, and is revers
 test('recording has red batch exclusion; preview keeps neutral single and editor exclusion', async t => {
     const { page } = await pageFor(t);
     assert.equal(await page.locator('#videoList button').filter({hasText:'收录排除'}).count(),0);
-    assert.equal(await page.locator('#batchRejectBtn').textContent(),'批量排除');
+    assert.equal(await page.locator('#batchRejectBtn .desktop-label').textContent(),'批量排除');
     assert.match(await page.locator('#batchRejectBtn').getAttribute('class'),/btn-danger/);
     await open(page);assert.equal(await page.locator('#editPanel').getByText('收录排除',{exact:true}).count(),0);
     await page.keyboard.press('Escape');
@@ -311,6 +311,7 @@ for (const width of [320, 390]) {
  test(`mobile batch bar stays visible while scrolling at ${width}px`, async t => {
   const {page, requests} = await pageFor(t, {width});
   await page.setViewportSize({width, height: 640});
+  await page.locator('#selectionMore summary').click();
   await page.locator('#selectVisibleBtn').click();
   const before = requests.length;
   await page.evaluate(() => {
@@ -323,8 +324,38 @@ for (const width of [320, 390]) {
    assert.ok(box.y >= 0 && box.y + box.height <= 640);
    assert.ok(box.x >= 0 && box.x + box.width <= width);
   }
+  await page.locator('#selectionMore summary').click();
   await page.locator('#clearSelectionBtn').click();
   assert.equal(await page.locator('#selectionBar').evaluate(el => el.classList.contains('has-selection')), false);
   assert.equal(requests.length, before);
+ });
+}
+
+for (const width of [320, 390]) {
+ test(`mobile compact changes drawer at ${width}px preserves drafts and avoids obstruction`, async t => {
+  const {page, requests} = await pageFor(t, {width});
+  await page.setViewportSize({width, height: 700});
+  await open(page);
+  await page.locator('#staffInfo').fill('drawer test');
+  await page.locator('#editPanel').getByText('保存到本地', {exact:true}).click();
+  assert.equal(await page.locator('#changesList').isVisible(), false);
+  const bar = await page.locator('#changesPanel').boundingBox();
+  assert.ok(bar.height <= 65);
+  await page.locator('#toggleChangesBtn').click();
+  assert.equal(await page.locator('#changesList').isVisible(), true);
+  assert.ok((await page.locator('#changesPanel').boundingBox()).height <= 420);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.locator('#changesBackdrop').click({position:{x:10,y:10}});
+  assert.equal(await page.locator('#changesList').isVisible(), false);
+  assert.equal((await state(page)).changes.length, 1);
+  await open(page);
+  assert.equal(await page.locator('#changesPanel').isVisible(), false);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#changesPanel').isVisible(), true);
+  await page.locator('#submitChangesBtn').click();
+  assert.equal(await page.locator('#submitModal').isVisible(), true);
+  await page.locator('#modalCancel').click();
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+  await page.screenshot({path:`/tmp/cvse-compact-${width}.png`,fullPage:true});
  });
 }

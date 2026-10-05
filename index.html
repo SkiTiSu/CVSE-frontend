@@ -159,10 +159,15 @@
                 <div class="selection-bar" id="selectionBar">
                     <div class="selection-summary" id="selectionSummary">已选择 0 项</div>
                     <div class="selection-actions">
-                        <button class="btn btn-secondary btn-sm" id="selectVisibleBtn">全选本页</button>
-                        <button class="btn btn-secondary btn-sm" id="clearSelectionBtn">清空选择</button>
-                        <button class="btn btn-success btn-sm" id="batchMarkExaminedBtn">批量标记为已收录</button>
-                        <button class="btn btn-danger btn-sm" id="batchRejectBtn" title="标记为已审核并排除所有期刊，保存到本地待提交">批量排除</button>
+                        <button class="btn btn-success btn-sm" id="batchMarkExaminedBtn" aria-label="批量标记为已收录"><span class="desktop-label">批量标记为已收录</span><span class="mobile-label">收录</span></button>
+                        <button class="btn btn-danger btn-sm" id="batchRejectBtn" title="标记为已审核并排除所有期刊，保存到本地待提交"><span class="desktop-label">批量排除</span><span class="mobile-label">排除</span></button>
+                        <details class="selection-more" id="selectionMore">
+                            <summary class="btn btn-secondary btn-sm">更多 ⋯</summary>
+                            <div class="selection-more-menu">
+                                <button class="btn btn-secondary btn-sm" id="selectVisibleBtn">全选本页</button>
+                                <button class="btn btn-secondary btn-sm" id="clearSelectionBtn">清空选择</button>
+                            </div>
+                        </details>
                     </div>
                 </div>
                 <div class="video-list layout-double" id="videoList">
@@ -271,15 +276,17 @@
         </div>
     </main>
 
+    <div class="changes-backdrop" id="changesBackdrop"></div>
     <div class="changes-panel" id="changesPanel">
         <div class="changes-header">
             <div class="changes-title">
-                📝 本地改动
+                <span class="desktop-label">📝 本地改动</span><span class="mobile-label">待提交</span>
                 <span class="changes-badge" id="changesCount">0</span>
             </div>
-            <div style="display: flex; gap: 0.75rem;">
+            <div class="changes-actions">
+                <button class="btn btn-secondary btn-sm mobile-label" id="toggleChangesBtn" aria-expanded="false" aria-controls="changesList">查看</button>
                 <button class="btn btn-secondary btn-sm" id="clearChangesBtn">清空</button>
-                <button class="btn btn-success btn-sm" id="submitChangesBtn">提交更改</button>
+                <button class="btn btn-success btn-sm" id="submitChangesBtn"><span class="desktop-label">提交更改</span><span class="mobile-label">提交</span></button>
             </div>
         </div>
         <div class="changes-list" id="changesList">
