@@ -147,7 +147,7 @@ test('identical in-flight preview clicks share one fetch; changed criteria abort
 
 test('preview timeout stops spinner without retrying',async t=>{
  const {w,app,doc}=await setup(t);let calls=0;const original=w.setTimeout.bind(w);
- w.setTimeout=(fn,ms)=>original(fn,ms===20000?0:ms);
+ w.setTimeout=(fn,ms)=>original(fn,ms===40000?0:ms);
  w.fetch=(url,{signal})=>new Promise((resolve,reject)=>{calls++;signal.addEventListener('abort',()=>reject(new w.DOMException('Aborted','AbortError')));});
  await app.getPreview();assert.equal(calls,1);assert.match(doc.querySelector('#rankingPreview').textContent,/预览读取超时/);assert.equal(doc.querySelector('#rankingPreview .loading'),null);
 });

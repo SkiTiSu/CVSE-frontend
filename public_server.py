@@ -66,7 +66,9 @@ def bounded_read(func, timeout=15):
 
 
 for read_name in ('get_videos_async', 'get_video_async', 'get_ranking_preview_async'):
-    setattr(server, read_name, bounded_read(getattr(server, read_name)))
+    # Large ranking ID snapshots can take >15s on a cold cache; keep other reads short.
+    timeout = 35 if read_name == 'get_ranking_preview_async' else 15
+    setattr(server, read_name, bounded_read(getattr(server, read_name), timeout=timeout))
 
 
 @app.before_request

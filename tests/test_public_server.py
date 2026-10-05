@@ -18,6 +18,15 @@ class PublicEntrypointTests(unittest.TestCase):
             asyncio.run(public_server.bounded_read(stalled, timeout=0.01)())
         self.assertEqual(cancelled, [True])
 
+    def test_preview_has_cold_cache_budget_without_extending_other_reads(self):
+        async def capture_budget(coro, timeout):
+            coro.close()  # Inspect the wrapper without invoking any real RPC.
+            return timeout
+        with patch.object(public_server.asyncio, 'wait_for', side_effect=capture_budget):
+            self.assertEqual(asyncio.run(public_server.server.get_ranking_preview_async(
+                'utau', 34, True)), 35)
+            self.assertEqual(asyncio.run(public_server.server.get_video_async('BV1Gt411k7Ut')), 15)
+
     def test_busy_rpc_does_not_block_health_and_missing_key(self):
         public_server.read_slots.acquire()
         try:

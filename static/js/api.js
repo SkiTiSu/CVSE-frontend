@@ -111,7 +111,7 @@ export function getRankingPreview({ rank, index, page, pageSize, videoId = '' })
     pendingPreview = current;
     current.promise = (async () => {
         let timedOut = false;
-        const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 20000);
+        const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 40000);
         try {
             const response = await fetch(`/api/ranking-preview?${query.toString()}`, {
                 headers: getAuthHeaders(), signal: controller.signal
