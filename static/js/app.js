@@ -88,6 +88,11 @@ class CVSEApp {
     setupFilters() {
         document.getElementById('searchBtn').addEventListener('click', () => this.searchVideos());
         document.getElementById('refreshBtn').addEventListener('click', () => this.refreshVideos());
+        document.getElementById('toggleRecordingFilters').addEventListener('click', event => {
+            const open = document.getElementById('recordingFilters').classList.toggle('mobile-filters-open');
+            event.currentTarget.setAttribute('aria-expanded', String(open));
+            event.currentTarget.textContent = open ? '收起筛选' : '展开筛选';
+        });
         document.getElementById('clearRecordingFiltersBtn').addEventListener('click', () => this.clearRecordingFilters());
 
         ['videoIdFilter', 'searchKeyword'].forEach(id => {
@@ -346,6 +351,7 @@ class CVSEApp {
             this.currentPageIndex = pageIndex;
             this.resetStats();
             this.currentDate = dateFilter;
+            document.getElementById('recordingDateLabel').textContent = `日期：${dateFilter || formatLocalDateInput()}`;
             this.currentPageSize = pageSize;
             try {
                 const result = await getVideos({

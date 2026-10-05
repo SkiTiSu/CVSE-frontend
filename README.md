@@ -173,3 +173,15 @@ preferences are saved locally and synchronized across tabs; theme switching
 never requests backend data. The theme initializer runs before the stylesheet
 paints to avoid a light flash when restoring dark mode. If browser storage is
 unavailable, switching still works for the current tab.
+
+
+## Mobile layout
+
+At widths up to 768px, navigation uses two rows and recording filters can be
+expanded without making a request. The selected date and summary remain visible;
+collapsing preserves filter selections. Forms use 16px input text and 44px action
+buttons, while pagination and preview controls wrap into explicit grids. Recording
+cards use compact thumbnails. The editor keeps its save/cancel actions outside its
+scrolling body and respects dynamic viewport height and safe-area insets. Desktop
+layout is unchanged. Layout checks cover 320px, 390px and 430px widths in light and
+dark modes, including a 440px-tall editor viewport.

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>CVSE 收录管理系统</title>
     <script src="/static/js/theme.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -22,9 +22,9 @@
                 <button class="nav-btn" data-page="debug">🔧 API调试</button>
                 <button class="nav-btn" id="settingsBtn">⚙️ 设置</button>
                 <select class="select theme-select" id="themeSelect" aria-label="外观模式" title="外观模式（自动保存）">
-                    <option value="system">◐ 跟随系统</option>
-                    <option value="light">☀ 浅色模式</option>
-                    <option value="dark">☾ 深色模式</option>
+                    <option value="system">跟随系统</option>
+                    <option value="light">浅色模式</option>
+                    <option value="dark">深色模式</option>
                 </select>
             </nav>
         </div>
@@ -39,6 +39,10 @@
                             📺 视频列表
                             <a href="https://cvse.pingcode.com/wiki/spaces/Z/pages/QigBLflM" target="_blank" class="manual-link">📖 收录手册</a>
                         </div>
+                    </div>
+                    <div class="mobile-filter-toolbar">
+                        <span id="recordingDateLabel"></span>
+                        <button class="btn btn-secondary" id="toggleRecordingFilters" aria-controls="recordingFilters" aria-expanded="false">展开筛选</button>
                     </div>
                     <div class="filter-panel">
                         <div class="stats-grid" id="statsGrid">
@@ -75,7 +79,7 @@
                                 <div class="stat-label">排除</div>
                             </div>
                         </div>
-                        <div class="filter-bar">
+                        <div class="filter-bar" id="recordingFilters">
                             <div class="filter-group">
                                 <span class="filter-label">日期:</span>
                                 <input type="date" class="input" id="dateFilter" min="0001-01-01" max="9999-12-31" style="width: 160px;">
@@ -178,7 +182,7 @@
             <div class="card">
                 <div class="card-header">
                     <div class="card-title">📊 排行榜预览</div>
-                    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                    <div class="preview-controls" style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
                         <select class="select" id="previewRank">
                             <option value="domestic">国产类</option>
                             <option value="sv">SV类</option>

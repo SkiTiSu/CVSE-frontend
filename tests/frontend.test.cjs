@@ -226,6 +226,7 @@ test('new filters, logo, large page size, exact search and exclusion work in bro
 
 test('both preview pagers stay synchronized and mobile expanded filter fits viewport', async t => {
     const { page, requests } = await pageFor(t, {width:390,previewTotal:4100});
+    await page.locator('#toggleRecordingFilters').click();
     await page.locator('#rankFilter summary').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.locator('[data-page="preview"]').click();
@@ -274,3 +275,34 @@ test('dark preview and mobile controls remain readable and fit viewport',async t
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  await page.screenshot({path:'/tmp/cvse-dark-mobile.png',fullPage:true});
 });
+
+
+for (const [width,colorScheme] of [[320,'dark'],[390,'light'],[430,'dark']]) {
+ test(`mobile layout ${width}px has reachable controls, collapsible filters and bounded editor`,async t=>{
+  const {page,requests}=await pageFor(t,{width,colorScheme});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  for(const selector of ['#settingsBtn','#themeSelect','[data-page="debug"]']){
+   const rect=await page.locator(selector).boundingBox();assert.ok(rect.x>=0&&rect.x+rect.width<=width);
+  }
+  assert.equal(await page.locator('#recordingFilters').isVisible(),false);
+  const before=requests.length;
+  await page.locator('#toggleRecordingFilters').click();assert.equal(await page.locator('#recordingFilters').isVisible(),true);
+  assert.equal(await page.locator('#toggleRecordingFilters').getAttribute('aria-expanded'),'true');
+  await page.locator('#rankFilter summary').click();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.locator('#rankFilter input[value="sv"]').check();
+  await page.locator('#toggleRecordingFilters').click();assert.equal(requests.length,before);
+  await page.locator('#toggleRecordingFilters').click();assert.equal(await page.locator('#rankFilter input[value="sv"]').isChecked(),true);
+  await page.locator('#clearRecordingFiltersBtn').click();await page.waitForFunction(()=>!document.querySelector('#videoList .loading'));
+  await page.locator('#toggleRecordingFilters').click();
+  const pager=await page.locator('#pagination').boundingBox();assert.ok(pager.x+pager.width<=width);
+  await page.screenshot({path:`/tmp/cvse-mobile-${width}.png`,fullPage:true,animations:'disabled'});
+  await open(page);await page.setViewportSize({width,height:440});
+  await page.locator('#staffInfo').fill('手机修改');
+  const save=page.locator('#editPanel').getByText('保存到本地',{exact:true});
+  const box=await save.boundingBox();assert.ok(box.y>=0&&box.y+box.height<=440);
+  assert.equal(await page.locator('#staffInfo').evaluate(el=>getComputedStyle(el).fontSize),'16px');
+  await page.screenshot({path:`/tmp/cvse-mobile-editor-${width}.png`,fullPage:true,animations:'disabled'});
+  await save.click();assert.equal(await page.locator('#editPanel').count(),0);
+  assert.equal((await state(page)).changes[0][1].staff_info,'手机修改');
+ });
+}
