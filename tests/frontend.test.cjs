@@ -241,6 +241,54 @@ test('both preview pagers stay synchronized and mobile expanded filter fits view
     await page.screenshot({path:'/tmp/cvse-preview-mobile.png', fullPage:true});
 });
 
+test('preview pagers recover from a failed next page and can keep moving in both directions', async t => {
+    const { page } = await pageFor(t);
+    const calls = []; let fail = true;
+    await page.route('**/api/ranking-preview?*', async route => {
+        const query = new URL(route.request().url()).searchParams;
+        const number = Number(query.get('page'));
+        calls.push({ page: number, rank: query.get('cursor_rank'), offset: query.get('cursor_offset') });
+        if (number === 2 && fail) {
+            fail = false;
+            return route.fulfill({ status: 503, json: { success: false, error: 'Backend is busy' } });
+        }
+        await route.fulfill({ json: { success: true, data: {
+            entries: [entry(`BV${number}`, number * 20)], stat: { count: 60 }, total: 60,
+            has_next: number < 3, next_cursor: number < 3 ? { rank: number * 20, offset: 1 } : null,
+        } } });
+    });
+    await page.locator('[data-page="preview"]').click();
+    await page.locator('#getPreviewBtn').click();
+    await page.waitForSelector('.ranking-row');
+    await page.locator('#previewNextPageBtnTop').click();
+    await page.waitForSelector('#rankingPreview [role="status"]');
+    assert.deepEqual(calls.map(call => call.page), [1, 2]);
+    assert.equal(await page.locator('.ranking-row .ranking-rank').textContent(), '#20');
+    for (const suffix of ['', 'Top']) {
+        assert.equal(await page.locator(`#previewNextPageBtn${suffix}`).isEnabled(), true);
+        assert.equal(await page.locator(`#previewPrevPageBtn${suffix}`).isDisabled(), true);
+        assert.match(await page.locator(`#previewPageInfo${suffix}`).textContent(), /第 1 页/);
+    }
+    await page.locator('#previewNextPageBtn').click();
+    await page.waitForFunction(() => app.previewPage === 2 && !app.previewLoading);
+    assert.equal(await page.locator('.ranking-row .ranking-rank').textContent(), '#40');
+    assert.equal(await page.locator('#rankingPreview [role="status"]').count(), 0);
+    assert.deepEqual(calls[2], { page: 2, rank: '20', offset: '1' });
+    await page.locator('#previewNextPageBtnTop').click();
+    await page.waitForFunction(() => app.previewPage === 3 && !app.previewLoading);
+    assert.equal(await page.locator('.ranking-row .ranking-rank').textContent(), '#60');
+    for (const suffix of ['', 'Top']) {
+        assert.equal(await page.locator(`#previewNextPageBtn${suffix}`).isDisabled(), true);
+        assert.equal(await page.locator(`#previewPrevPageBtn${suffix}`).isEnabled(), true);
+    }
+    await page.locator('#previewPrevPageBtn').click();
+    await page.waitForFunction(() => app.previewPage === 2 && !app.previewLoading);
+    await page.locator('#previewPrevPageBtnTop').click();
+    await page.waitForFunction(() => app.previewPage === 1 && !app.previewLoading);
+    assert.equal(await page.locator('.ranking-row .ranking-rank').textContent(), '#20');
+    assert.deepEqual(calls.map(call => call.page), [1, 2, 2, 3, 2, 1]);
+});
+
 
 test('theme follows system by default, switches without RPC, and persists manual choice',async t=>{
  const {page,requests}=await pageFor(t,{colorScheme:'dark'});

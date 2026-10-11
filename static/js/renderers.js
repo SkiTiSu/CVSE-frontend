@@ -201,7 +201,7 @@ export function createPreviewCard(entry) {
     const bvid = String(entry.bvid ?? '');
     const bvidArg = jsArg(bvid);
     const specialRank = String(entry.special_rank ?? entry.specialRank ?? 'normal').toLowerCase();
-    const rank = ['hot', 'sh'].includes(specialRank) ? specialRank.toUpperCase() : `#${entry.rank}`;
+    const rank = entry.rank === 0 && ['hot', 'sh'].includes(specialRank) ? specialRank.toUpperCase() : `#${entry.rank}`;
     const excluded = entry.is_examined && (entry.ranks || []).length === 0;
     const metrics = [
         ['view', '播放'], ['like', '点赞'], ['share', '分享'], ['coin', '硬币'],
@@ -224,14 +224,16 @@ export function createPreviewCard(entry) {
                 <div class="ranking-uploader">UP主: ${escapeHtml(entry.uploader || '未知')} <span class="ranking-duration">时长 ${entry.duration == null ? '未知' : formatDuration(entry.duration)}</span></div>
                 ${excluded ? `<span class="tag tag-exclusion">${entry.pending ? '已排除 · 待提交' : '已排除'}</span>` : entry.pending ? '<span class="tag tag-uncheck">已修改 · 待提交</span>' : ''}
                 ${excluded ? '<div class="preview-hint">本次排除不会自动重算榜单，原排名暂时保留。</div>' : ''}
-                <div class="ranking-metrics">
-                    ${metrics.map(([key, label]) => `<span class="ranking-metric"><span>${label}</span><strong>${Number(entry[key] || 0).toLocaleString()}</strong></span>`).join('')}
+                <div class="ranking-footer">
+                    <div class="ranking-metrics">
+                        ${metrics.map(([key, label]) => `<span class="ranking-metric"><span>${label}</span><strong>${Number(entry[key] || 0).toLocaleString()}</strong></span>`).join('')}
+                    </div>
+                    <div class="ranking-actions">
+                        <button class="btn btn-primary" onclick="app.openEditPanelByBvid(${bvidArg})">✏️ 编辑</button>
+                        <button class="btn btn-secondary" onclick="app.excludeVideo(${bvidArg})" title="排除所有期刊，保存到本地待提交">收录排除</button>
+                        <a class="btn btn-secondary" href="https://www.bilibili.com/video/${escapeHtml(bvid)}" target="_blank" rel="noopener noreferrer">🔗 跳转</a>
+                    </div>
                 </div>
-            </div>
-            <div class="ranking-actions">
-                <button class="btn btn-primary btn-sm" onclick="app.openEditPanelByBvid(${bvidArg})">✏️ 编辑</button>
-                <button class="btn btn-secondary btn-sm" onclick="app.excludeVideo(${bvidArg})" title="排除所有期刊，保存到本地待提交">收录排除</button>
-                <a class="btn btn-secondary btn-sm" href="https://www.bilibili.com/video/${escapeHtml(bvid)}" target="_blank" rel="noopener noreferrer">🔗 跳转</a>
             </div>
         </article>
     `;

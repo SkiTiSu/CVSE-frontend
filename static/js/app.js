@@ -1053,6 +1053,9 @@ class CVSEApp {
     previewGoPage(newPage) {
         if (!Number.isInteger(newPage) || newPage < 1 || !this.previewCursors[newPage] || Math.abs(newPage - this.previewPage) !== 1 || this.previewVideoId || this.previewLoading) return;
         const requestId = ++this.previewRequestId;
+        const previousData = this.previewData;
+        const previousPage = this.previewPage;
+        const previousTotal = this.previewTotal;
         this.setPreviewLoading(true);
         this.previewData = null;
 
@@ -1077,7 +1080,11 @@ class CVSEApp {
             this.renderPreview();
         }).catch(error => {
             if (requestId !== this.previewRequestId) return;
-            preview.innerHTML = createPreviewError(error);
+            this.previewData = previousData;
+            this.previewPage = previousPage;
+            this.previewTotal = previousTotal;
+            this.renderPreview();
+            preview.insertAdjacentHTML('afterbegin', createPreviewError(error));
         }).finally(() => {
             if (requestId === this.previewRequestId) this.setPreviewLoading(false);
         });
@@ -1093,7 +1100,7 @@ class CVSEApp {
         const seen = new Set();
         const data = raw ? { ...raw, entries: rows.filter(entry => {
             const special = String(entry.special_rank ?? entry.specialRank ?? '').toLowerCase();
-            if (!raw.search_id && !showSpecial && ['hot', 'sh'].includes(special)) return false;
+            if (!raw.search_id && !showSpecial && entry.rank === 0 && ['hot', 'sh'].includes(special)) return false;
             if (seen.has(entry.bvid)) return false;
             seen.add(entry.bvid);
             return true;

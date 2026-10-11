@@ -127,11 +127,34 @@ test('changing preview criteria dismisses stale loading and ignores pending resp
 
 test('HOT/SH toggles only filter loaded rows with zero requests and keep empty-page navigation',async t=>{
  const {w,app,doc,requests}=await setup(t);
- app.previewData={entries:[{...video('BV8'),rank:1,specialRank:'hot'}],stat:{count:4100},total:4100,has_next:true,next_cursor:{rank:21,offset:0}};app.previewTotal=4100;app.previewPageSize=20;app.renderPreview();
+ app.previewData={entries:[{...video('BV8'),rank:0,specialRank:'hot'}],stat:{count:4100},total:4100,has_next:true,next_cursor:{rank:21,offset:0}};app.previewTotal=4100;app.previewPageSize=20;app.renderPreview();
  const before=requests.length;assert.equal(doc.querySelectorAll('.ranking-row').length,0);assert.equal(doc.querySelector('#previewNextPageBtn').disabled,false);
  changeCheckbox(w,'#previewShowSpecial',true);assert.equal(doc.querySelectorAll('.ranking-row').length,1);
  changeCheckbox(w,'#previewShowSpecial',false);assert.equal(doc.querySelectorAll('.ranking-row').length,0);assert.equal(requests.length,before);
  assert.match(doc.querySelector('#previewPageInfo').textContent,/第 1 页/);
+});
+
+test('UTAU 35 HOT rows with nonzero ranks stay visible with numeric labels on every page',async t=>{
+ const {w,app,doc,requests}=await setup(t);
+ const ranked=[
+  {...video('BV1DRzJYLEmB'),rank:21,special_rank:'hot',specialRank:'normal'},
+  {...video('BV1sdCzB8Ez7'),rank:25,specialRank:'hot'},
+  {...video('BV1JqjB6JE39'),rank:27,special_rank:'hot'},
+  {...video('BV28'),rank:28,special_rank:'sh'},
+ ];
+ app.previewRank='utau';app.previewIndex=35;app.previewTotal=40;
+ app.previewData={entries:ranked,special_entries:[{...video('BV8'),rank:0,special_rank:'hot'},{...video('BV9'),rank:0,special_rank:'sh'}],stat:{count:40},total:40,has_next:true};
+ const before=requests.length;
+ const labels=()=>[...doc.querySelectorAll('.ranking-row .ranking-rank')].map(el=>el.textContent);
+ for(const page of [1,2]){
+  app.previewPage=page;app.renderPreview();
+  assert.deepEqual(labels(),['#21','#25','#27','#28']);
+  changeCheckbox(w,'#previewShowSpecial',true);
+  assert.deepEqual(labels(),page===1?['HOT','SH','#21','#25','#27','#28']:['#21','#25','#27','#28']);
+  changeCheckbox(w,'#previewShowSpecial',false);
+  assert.deepEqual(labels(),['#21','#25','#27','#28']);
+ }
+ assert.equal(requests.length,before);
 });
 
 test('identical in-flight preview clicks share one fetch; changed criteria abort old fetch',async t=>{
@@ -213,6 +236,34 @@ test('preview uses cursor navigation and exposes no jump controls',async t=>{
  for(const suffix of ['', 'Top']) {assert.equal(doc.querySelector(`#previewPageInput${suffix}`),null);assert.match(doc.querySelector(`#previewPageInfo${suffix}`).textContent,/第 2 页/);}
 });
 
+test('failed next page keeps the current rows and cursor and allows a manual retry',async t=>{
+ const {w,app,doc}=await setup(t);const calls=[];let fail=true;
+ const first={entries:[{...video('BV1'),rank:20}],stat:{count:40},total:40,has_next:true,next_cursor:{rank:20,offset:1}};
+ w.fetch=async url=>{
+  calls.push(url);const page=new URL(url,'http://localhost').searchParams.get('page');
+  if(page==='2'&&fail){fail=false;return {ok:false,status:503,json:async()=>({success:false,error:'Backend is busy'})};}
+  return {ok:true,json:async()=>({success:true,data:page==='2'?{...first,entries:[{...video('BV2'),rank:21}],has_next:false,next_cursor:null}:first})};
+ };
+ await app.getPreview();const cursor=clean(app.previewCursors[2]);
+ await app.previewChangePage(1);
+ assert.equal(calls.length,2);assert.equal(app.previewPage,1);assert.equal(app.previewLoading,false);
+ assert.equal(doc.querySelector('.ranking-row').dataset.bvid,'BV1');assert.match(doc.querySelector('#rankingPreview').textContent,/正在处理其他请求/);
+ assert.deepEqual(clean(app.previewCursors[2]),cursor);
+ for(const suffix of ['', 'Top']){
+  assert.equal(doc.querySelector(`#previewNextPageBtn${suffix}`).disabled,false);
+  assert.equal(doc.querySelector(`#previewPrevPageBtn${suffix}`).disabled,true);
+  assert.match(doc.querySelector(`#previewPageInfo${suffix}`).textContent,/第 1 页/);
+ }
+ await app.previewChangePage(1);assert.equal(calls.length,3);assert.equal(app.previewPage,2);
+ assert.equal(doc.querySelector('.ranking-row').dataset.bvid,'BV2');assert.equal(doc.querySelector('#rankingPreview [role="status"]'),null);
+ for(const suffix of ['', 'Top']){
+  assert.equal(doc.querySelector(`#previewNextPageBtn${suffix}`).disabled,true);
+  assert.equal(doc.querySelector(`#previewPrevPageBtn${suffix}`).disabled,false);
+ }
+ const retry=new URL(calls[2],'http://localhost').searchParams;
+ assert.equal(retry.get('cursor_rank'),String(cursor.rank));assert.equal(retry.get('cursor_offset'),String(cursor.offset));
+});
+
 test('preview exclusion and undo update immediately without reloading; submit preserves marker',async t=>{
  const {app,doc,requests}=await setup(t);
  app.previewData={entries:[{...video('BV1'),rank:1}],stat:{count:1},total:1};app.previewTotal=1;app.renderPreview();
@@ -259,7 +310,7 @@ test('special rows and truncation notice appear only on first page without fetch
  const {w,app,doc,requests}=await setup(t);
  app.previewData={entries:[{...video('BV1'),rank:21},{...video('BV2'),rank:22,special_rank:'hot'}],special_entries:[{...video('BV8'),rank:0,special_rank:'sh'}],special_truncated:true,next_cursor:{rank:21,offset:0},has_next:true,stat:{count:40},total:40};app.previewTotal=40;app.previewPage=2;
  const before=requests.length;changeCheckbox(w,'#previewShowSpecial',true);
- assert.equal(doc.querySelectorAll('.ranking-row').length,1);assert.ok(!doc.querySelector('#rankingPreview').textContent.includes('超过显示上限'));
+ assert.equal(doc.querySelectorAll('.ranking-row').length,2);assert.ok(!doc.querySelector('#rankingPreview').textContent.includes('超过显示上限'));
  app.previewPage=1;app.renderPreview();assert.equal(doc.querySelectorAll('.ranking-row').length,3);assert.match(doc.querySelector('#rankingPreview').textContent,/超过显示上限/);
  assert.equal(requests.length,before);
 });
