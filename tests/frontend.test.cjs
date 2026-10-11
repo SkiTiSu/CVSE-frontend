@@ -208,7 +208,11 @@ test('new filters, logo, large page size, exact search and exclusion work in bro
     assert.equal(requests.at(-1).url.searchParams.get('rank'), 'sv,utau');
     assert.equal(await page.locator('.logo-icon').evaluate(img => img.complete && img.naturalWidth > 0), true);
     await page.locator('[data-page="preview"]').click();
+    const previewRequestsBefore = requests.filter(r => r.url.pathname === '/api/ranking-preview').length;
     await page.locator('#previewPageSize').selectOption('120');
+    assert.equal(requests.filter(r => r.url.pathname === '/api/ranking-preview').length, previewRequestsBefore);
+    assert.match(await page.locator('#rankingPreview').textContent(), /请点击“预览”/);
+    await page.locator('#getPreviewBtn').click();
     await page.waitForSelector('.ranking-row');
     assert.equal(requests.at(-1).url.searchParams.get('page_size'), '120');
     await page.locator('.ranking-row').first().getByText('收录排除', {exact:true}).click();
@@ -287,6 +291,24 @@ test('preview pagers recover from a failed next page and can keep moving in both
     await page.waitForFunction(() => app.previewPage === 1 && !app.previewLoading);
     assert.equal(await page.locator('.ranking-row .ranking-rank').textContent(), '#20');
     assert.deepEqual(calls.map(call => call.page), [1, 2, 2, 3, 2, 1]);
+});
+
+test('old deployed server reports version mismatch instead of silently disabling pagination',async t=>{
+ const {page}=await pageFor(t);let calls=0;
+ await page.route('**/api/ranking-preview?*',async route=>{
+  calls++;const size=new URL(route.request().url()).searchParams.get('page_size');
+  if(size==='120') return route.fulfill({status:400,json:{success:false,error:'page must be >= 1 and page_size must be between 1 and 110'}});
+  return route.fulfill({json:{success:true,data:{entries:[entry('BV1',1)],stat:{count:80153},total:80153,page:1,page_size:20}}});
+ });
+ await page.locator('[data-page="preview"]').click();
+ for(const size of ['120','20']){
+  const before=calls;await page.locator('#previewPageSize').selectOption(size);
+  assert.equal(calls,before);assert.match(await page.locator('#rankingPreview').textContent(),/请点击“预览”/);
+  await page.locator('#getPreviewBtn').click();await page.waitForSelector('#rankingPreview [role="status"]');
+  assert.equal(calls,before+1);assert.match(await page.locator('#rankingPreview [role="status"]').textContent(),/请联系管理员更新并重启服务/);
+  assert.equal(await page.locator('.ranking-row').count(),0);assert.equal(await page.locator('#getPreviewBtn').isEnabled(),true);
+  assert.equal(await page.locator('#previewPaginationTop').isVisible(),false);
+ }
 });
 
 

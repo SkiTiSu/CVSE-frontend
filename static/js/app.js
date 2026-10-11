@@ -136,13 +136,9 @@ class CVSEApp {
             document.getElementById('previewVideoId').value = '';
             this.getPreview();
         });
-        document.getElementById('previewPageSize').addEventListener('change', () => {
-            this.previewPage = 1;
-            this.previewCursors = {1: {rank: 1, offset: 0}};
-            this.getPreview();
-        });
-        document.getElementById('previewRank').addEventListener('change', () => this.invalidatePreview());
-        document.getElementById('previewIndex').addEventListener('change', () => this.invalidatePreview());
+        for (const id of ['previewRank', 'previewIndex', 'previewPageSize']) {
+            document.getElementById(id).addEventListener('change', () => this.invalidatePreview());
+        }
         document.getElementById('previewPrevPageBtn').addEventListener('click', () => this.previewChangePage(-1));
         document.getElementById('previewNextPageBtn').addEventListener('click', () => this.previewChangePage(1));
         document.getElementById('previewPrevPageBtnTop').addEventListener('click', () => this.previewChangePage(-1));

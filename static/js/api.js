@@ -118,6 +118,16 @@ export function getRankingPreview({ rank, index, page, pageSize, videoId = '', c
                 headers: getAuthHeaders(), signal: controller.signal
             });
             const result = await parseJsonResponse(response, '获取预览失败');
+            if (!videoId) {
+                const data = result?.data;
+                const cursor = data?.next_cursor;
+                if (typeof data?.has_next !== 'boolean' || (data.has_next && (
+                    !Number.isInteger(cursor?.rank) || cursor.rank < 1 || cursor.rank > 2147483646 ||
+                    !Number.isInteger(cursor?.offset) || cursor.offset < 0 || cursor.offset > 200000
+                ))) {
+                    throw new Error('预览服务版本与页面不一致：响应缺少有效的分页信息，请更新并重启服务。');
+                }
+            }
             if (!controller.signal.aborted && result?.data && !videoId) {
                 const special = cachedSpecial || { entries: result.data.special_entries || [], truncated: result.data.special_truncated || false };
                 if (!cachedSpecial) {

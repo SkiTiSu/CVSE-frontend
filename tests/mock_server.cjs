@@ -15,7 +15,7 @@ http.createServer(async (req,res) => {
      const r=url.searchParams.get('is_republish'); const filtered=videos.filter(v=>!['true','false'].includes(r)||v.is_republish===(r==='true'));
      data={success:true,data:filtered,total:filtered.length,stats:{total:filtered.length}};
    } else if(url.pathname==='/api/ranking-preview') {
-     data={success:true,data:{entries,stat:{count:entries.length,totalNew:3},total:entries.length}};
+     data={success:true,data:{entries,stat:{count:entries.length,totalNew:3},total:entries.length,has_next:false,next_cursor:null}};
    } else if(url.pathname.startsWith('/api/video/')) data={success:true,data:{...videos[0],bvid:url.pathname.split('/').pop()}};
    else {res.writeHead(405);return res.end('Disabled in fixture server');}
    res.setHeader('Content-Type','application/json'); return res.end(JSON.stringify(data));

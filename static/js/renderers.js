@@ -243,6 +243,7 @@ export function createPreviewError(error) {
     const detail = String(error?.message || '未知错误');
     let message = '暂时无法读取预览，请检查期刊、期数，或稍后手动重试。';
     if (/timeout|超时/i.test(detail)) message = '预览读取超时，请稍后手动重试。';
+    else if (/服务版本与页面不一致|HTTP 400.*page_size must be between 1 and 110/i.test(detail)) message = '预览服务尚未更新，请联系管理员更新并重启服务后重试。';
     else if (/503|busy/i.test(detail)) message = '服务器正在处理其他请求，请稍后再试。';
     else if (/No ranking meta|No cached calculation/i.test(detail)) message = '暂时无法取得该期榜单，可能尚未计算。请核对期刊和期数。';
     else if (/该期暂无可读取/.test(detail)) message = '该期暂无可读取的已计算榜单，请核对期刊和期数，或稍后再来查看。';

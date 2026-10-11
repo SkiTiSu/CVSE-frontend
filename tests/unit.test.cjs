@@ -18,7 +18,7 @@ async function setup(t) {
             if(pending.has(bvid)) return pending.get(bvid);
             return {ok:true,json:async()=>({success:true,data:video(bvid)})};
         }
-        if (url.startsWith('/api/ranking-preview')) return {ok:true,json:async()=>({success:true,data:{entries:[],stat:{count:2},total:0}})};
+        if (url.startsWith('/api/ranking-preview')) return {ok:true,json:async()=>({success:true,data:{entries:[],stat:{count:2},total:0,has_next:false,next_cursor:null}})};
         return {ok:true,json:async()=>({success:true,data:clean(initial),total:3,stats:{}})};
     };
     for(const file of ['utils.js','api.js','renderers.js','app.js']) {
@@ -92,7 +92,7 @@ test('late preview response cannot overwrite newer HOT/SH visibility or page req
  w.fetch=url=>new Promise(resolve=>pending.push({url,resolve}));
  doc.querySelector('#previewShowSpecial').checked=true;const old=app.getPreview();
  doc.querySelector('#previewShowSpecial').checked=false;doc.querySelector('#previewIndex').value='2';const latest=app.getPreview();
- const answer=entries=>({ok:true,json:async()=>({success:true,data:{entries,stat:{count:entries.length},total:entries.length}})});
+ const answer=entries=>({ok:true,json:async()=>({success:true,data:{entries,stat:{count:entries.length},total:entries.length,has_next:false,next_cursor:null}})});
  pending[1].resolve(answer([{...video('BV1'),rank:1,specialRank:'normal'}]));await latest;
  pending[0].resolve(answer([{...video('BV8'),rank:0,specialRank:'hot'}]));await old;
  assert.equal(app.previewData.entries[0].bvid,'BV1');assert.equal(app.previewShowSpecial,false);assert.ok(!doc.querySelector('#rankingPreview').textContent.includes('HOT'));
@@ -162,7 +162,7 @@ test('identical in-flight preview clicks share one fetch; changed criteria abort
  w.fetch=(url,options)=>new Promise(resolve=>pending.push({url,options,resolve}));
  const first=app.getPreview(),again=app.getPreview();assert.equal(pending.length,1);
  doc.querySelector('#previewIndex').value='2';const latest=app.getPreview();assert.equal(pending.length,2);assert.equal(pending[0].options.signal.aborted,true);
- const answer=bvid=>({ok:true,json:async()=>({success:true,data:{entries:[{...video(bvid),rank:1}],stat:{count:1},total:1}})});
+ const answer=bvid=>({ok:true,json:async()=>({success:true,data:{entries:[{...video(bvid),rank:1}],stat:{count:1},total:1,has_next:false,next_cursor:null}})});
  pending[0].resolve(answer('BV1'));await Promise.all([first,again]);
  const sameLatest=app.getPreview();assert.equal(pending.length,2); // old finally must not clear new flight
  pending[1].resolve(answer('BV2'));await Promise.all([latest,sameLatest]);assert.equal(app.previewData.entries[0].bvid,'BV2');
@@ -173,6 +173,23 @@ test('preview timeout stops spinner without retrying',async t=>{
  w.setTimeout=(fn,ms)=>original(fn,ms===40000?0:ms);
  w.fetch=(url,{signal})=>new Promise((resolve,reject)=>{calls++;signal.addEventListener('abort',()=>reject(new w.DOMException('Aborted','AbortError')));});
  await app.getPreview();assert.equal(calls,1);assert.match(doc.querySelector('#rankingPreview').textContent,/预览读取超时/);assert.equal(doc.querySelector('#rankingPreview .loading'),null);
+});
+
+test('legacy or malformed pagination produces an actionable error without retrying or caching',async t=>{
+ const {w,app,doc}=await setup(t);const calls=[];
+ const invalid=[{}, {has_next:'true'}, {has_next:true,next_cursor:null},
+  {has_next:true,next_cursor:{rank:0,offset:1}}, {has_next:true,next_cursor:{rank:20,offset:-1}}];
+ for(const pagination of invalid){
+  w.fetch=async url=>{calls.push(url);return {ok:true,json:async()=>({success:true,data:{entries:[{...video('BV1'),rank:1}],stat:{count:40},total:40,...pagination}})};};
+  const before=calls.length;await app.getPreview();assert.equal(calls.length,before+1);
+  assert.equal(app.previewData,null);assert.equal(app.previewLoading,false);
+  assert.match(doc.querySelector('#rankingPreview').textContent,/请联系管理员更新并重启服务/);
+  assert.equal(doc.querySelectorAll('.ranking-row').length,0);assert.equal(doc.querySelector('#getPreviewBtn').disabled,false);
+  assert.ok(calls.at(-1).includes('include_special=true'));
+ }
+ assert.match(w.createPreviewError(new Error('HTTP 400 page must be >= 1 and page_size must be between 1 and 110')),/请联系管理员更新并重启服务/);
+ await w.getRankingPreview({rank:'domestic',index:1,page:1,pageSize:20,videoId:'av123'});
+ assert.ok(!calls.at(-1).includes('include_special'));
 });
 
 
@@ -279,9 +296,20 @@ test('preview empty and failure states are distinct and error detail is escaped'
  assert.match(html,/暂时无法读取/);assert.ok(!html.includes('<img'));assert.ok(!html.includes('暂无视频数据'));
 });
 
-test('80 and 120 page sizes reach API once and preserve bounded parameter',async t=>{
- const {app,doc,requests}=await setup(t);
- for(const size of ['80','120']){doc.querySelector('#previewPageSize').value=size;const before=requests.length;await app.getPreview();assert.equal(requests.length,before+1);assert.equal(new URL(requests.at(-1).url,'http://localhost').searchParams.get('page_size'),size);}
+test('changing page size waits for manual preview and resets navigation without a request',async t=>{
+ const {w,app,doc,requests}=await setup(t);
+ await app.getPreview();
+ for(const size of ['80','120']){
+  app.previewPage=2;app.previewCursors[2]={rank:20,offset:1};
+  const select=doc.querySelector('#previewPageSize');select.value=size;
+  const before=requests.length;select.dispatchEvent(new w.Event('change',{bubbles:true}));await new Promise(r=>setTimeout(r,0));
+  assert.equal(requests.length,before);assert.equal(app.previewPage,1);assert.equal(app.previewData,null);
+  assert.deepEqual(clean(app.previewCursors),{'1':{rank:1,offset:0}});
+  assert.match(doc.querySelector('#rankingPreview').textContent,/请点击“预览”/);
+  doc.querySelector('#getPreviewBtn').click();await new Promise(r=>setTimeout(r,0));
+  assert.equal(requests.length,before+1);const query=new URL(requests.at(-1).url,'http://localhost').searchParams;
+  assert.equal(query.get('page_size'),size);assert.equal(query.get('page'),'1');assert.equal(app.previewLoading,false);
+ }
 });
 
 

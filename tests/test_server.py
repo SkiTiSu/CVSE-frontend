@@ -418,6 +418,24 @@ class ApiRouteTests(MockRPCMixin, unittest.TestCase):
         self.assertEqual(payload["data"]["total"], 6)
         self.assertEqual([entry["rank"] for entry in payload["data"]["entries"]], [1, 2])
 
+    def test_health_reports_running_preview_contract_without_rpc(self):
+        response = self.http.get("/api/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["preview"], {
+            "api_version": 2, "max_page_size": 120, "pagination": "cursor",
+        })
+        self.create.assert_not_awaited()
+
+    def test_preview_route_accepts_120_and_returns_cursor_pagination(self):
+        self.set_rankings([ranking(n, n) for n in range(1, 122)])
+        response = self.http.get("/api/ranking-preview?index=12&page_size=120")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json["data"]
+        self.assertEqual(len(payload["entries"]), 120)
+        self.assertTrue(payload["has_next"])
+        self.assertEqual(payload["next_cursor"], {"rank": 120, "offset": 1})
+        self.client.getAllRankingInfo.assert_awaited_once_with(server.Rank.DOMESTIC, 12, True, 1, 122)
+
     def test_preview_route_special_parameter_does_not_expand_request(self):
         self.set_rankings([ranking(1, 1, "hot"), ranking(2, 2), ranking(3, 0, "sh")])
         for value in ("true", "false"):

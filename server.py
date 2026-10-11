@@ -44,6 +44,8 @@ limiter = Limiter(
 
 CVSE_HOST = "47.104.91.74"
 CVSE_PORT = "8663"
+PREVIEW_API_VERSION = 2
+MAX_PREVIEW_PAGE_SIZE = 120
 
 
 def format_video_entry(entry):
@@ -298,6 +300,11 @@ def health():
             "status": "healthy",
             "server": "CVSE Backend",
             "time": datetime.now().isoformat(),
+            "preview": {
+                "api_version": PREVIEW_API_VERSION,
+                "max_page_size": MAX_PREVIEW_PAGE_SIZE,
+                "pagination": "cursor",
+            },
         }
     )
 
@@ -485,8 +492,8 @@ async def get_ranking_preview_async(
     cursor_offset: int = 0,
 ):
     """Read a bounded rank interval and continue within ties using a cursor."""
-    if page < 1 or not 1 <= page_size <= 120:
-        raise ValueError("page must be >= 1 and page_size must be between 1 and 120")
+    if page < 1 or not 1 <= page_size <= MAX_PREVIEW_PAGE_SIZE:
+        raise ValueError(f"page must be >= 1 and page_size must be between 1 and {MAX_PREVIEW_PAGE_SIZE}")
     search_index = parse_video_index(video_id) if video_id else None
     client = await CVSE_Client.create(CVSE_HOST, CVSE_PORT, auth_key)
     rank = Rank[rank_name.upper()]
@@ -643,8 +650,8 @@ def get_ranking_preview():
             page_size = int(request.args.get("page_size", 20))
         except (TypeError, ValueError):
             return jsonify(success=False, error="page and page_size must be integers"), 400
-        if page < 1 or not 1 <= page_size <= 120:
-            return jsonify(success=False, error="page must be >= 1 and page_size must be between 1 and 120"), 400
+        if page < 1 or not 1 <= page_size <= MAX_PREVIEW_PAGE_SIZE:
+            return jsonify(success=False, error=f"page must be >= 1 and page_size must be between 1 and {MAX_PREVIEW_PAGE_SIZE}"), 400
         try:
             cursor_rank = int(request.args.get("cursor_rank", (page - 1) * page_size + 1))
             cursor_offset = int(request.args.get("cursor_offset", 0))
